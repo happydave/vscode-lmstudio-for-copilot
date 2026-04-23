@@ -1,0 +1,159 @@
+{
+  "name": "lmstudio-for-copilot",
+  "displayName": "LM Studio Copilot",
+  "description": "VS Code extension providing inline code completion powered by LM Studio models with automatic discovery",
+  "version": "0.1.0",
+  "publisher": "lmstudio",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lmstudio-ai/vscode-lmstudio"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "AI",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "lm-studio",
+    "copilot",
+    "ai",
+    "code-completion",
+    "local-llm",
+    "inline-suggestions"
+  ],
+  "activationEvents": [
+    "onLanguage:typescript",
+    "onLanguage:javascript",
+    "onLanguage:python",
+    "onLanguage:go",
+    "onLanguage:rust",
+    "onLanguage:java",
+    "onLanguage:csharp",
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "lmstudio.refreshModels",
+        "title": "LM Studio: Refresh Models",
+        "category": "LM Studio"
+      },
+      {
+        "command": "lmstudio.toggleSuggestions",
+        "title": "LM Studio: Toggle Suggestions",
+        "category": "LM Studio"
+      },
+      {
+        "command": "lmstudio.openOutput",
+        "title": "LM Studio: Open Output Channel",
+        "category": "LM Studio"
+      }
+    ],
+    "configuration": {
+      "title": "LM Studio Copilot",
+      "properties": {
+        "lmStudioCopilot.serverHost": {
+          "type": "string",
+          "default": "localhost",
+          "description": "Hostname or IP address of the LM Studio HTTP server"
+        },
+        "lmStudioCopilot.serverPort": {
+          "type": "number",
+          "default": 1234,
+          "description": "Port number for LM Studio HTTP server"
+        },
+        "lmStudioCopilot.requestTimeout": {
+          "type": "number",
+          "default": 86400000,
+          "description": "Timeout in milliseconds for requests to the LM Studio server (default 24h). Has no effect when lmStudioCopilot.disableAllTimeouts is true."
+        },
+        "lmStudioCopilot.disableAllTimeouts": {
+          "type": "boolean",
+          "default": true,
+          "description": "Disable all request timeouts. Recommended for local models which may be slow on large tasks."
+        },
+        "lmStudioCopilot.enableSuggestions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable inline code suggestions"
+        },
+        "lmStudioCopilot.toolGuidanceEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable system prompt guidance to encourage use of native file-writing tools (create_file, replace_string_in_file) for proper VS Code diff tracking"
+        },
+        "lmStudioCopilot.nativeToolIntegration": {
+          "type": "boolean",
+          "default": false,
+          "description": "Route tool calls through VS Code's filesystem API for proper diff tracking (currently experimental)"
+        },
+        "lmStudioCopilot.showReasoningContent": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show reasoning/thinking tokens from models that emit them (e.g., DeepSeek-R1, QwQ). These appear as plain text before the main response."
+        }
+      }
+    },
+    "languageModelChatProviders": [
+      {
+        "vendor": "lmstudio",
+        "displayName": "LM Studio"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "lmstudio.refreshModels",
+          "when": "false"
+        },
+        {
+          "command": "lmstudio.toggleSuggestions",
+          "when": "false"
+        },
+        {
+          "command": "lmstudio.openOutput",
+          "when": "false"
+        }
+      ],
+      "statusbar/remoteIndicator": [
+        {
+          "command": "lmstudio.refreshModels",
+          "group": "navigation",
+          "when": "true"
+        },
+        {
+          "command": "lmstudio.toggleSuggestions",
+          "group": "navigation",
+          "when": "true"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "lint": "eslint src --ext ts",
+    "test": "jest",
+    "package": "vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.x",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.56.0",
+    "jest": "^29.7.0",
+    "sinon": "^19.0.2",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.6.3"
+  }
+}

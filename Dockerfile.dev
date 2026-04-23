@@ -1,0 +1,13 @@
+FROM node:lts-alpine
+
+RUN npm install -g @vscode/vsce jest typescript
+
+WORKDIR /workspace
+
+COPY package*.json ./
+
+# Install dependencies (written to host via volume mount)
+RUN npm install
+
+# Expose workspace for editor tooling
+VOLUME ["/workspace"]
