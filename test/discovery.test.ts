@@ -32,17 +32,16 @@ describe('DiscoveryService', () => {
     expect(status.availableModels.length).toBe(0);
   });
 
-  it('should return connected state when fetch succeeds', async () => {
-    // Mock successful response
+  it('should return NoModelLoaded state when fetch succeeds but no models are loaded', async () => {
+    // Mock successful response with empty model list
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
       json: jest.fn().mockResolvedValue({
-        models: [],
-        model: null
+        models: []
       })
     });
 
     const status = await service.checkConnection();
-    expect(status.connectionState).toBe(ConnectionState.Disconnected); // No model loaded
+    expect(status.connectionState).toBe(ConnectionState.NoModelLoaded);
   });
 });

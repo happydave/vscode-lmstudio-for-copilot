@@ -35,3 +35,9 @@ docker-build:
 # Open interactive shell in Docker container
 docker-shell:
 	docker run --rm -it -v $(shell pwd):/workspace -w /workspace node:lts-alpine sh
+
+# Test token metadata availability (requires LM Studio running)
+test-token-metadata:
+	python3 scripts/test-token-metadata.py
+
+.PHONY: install compile watch package clean test lint docker-build docker-shell test-token-metadata

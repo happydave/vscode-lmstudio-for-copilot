@@ -80,7 +80,10 @@ export class ModelManager {
    * @param modelId The ID of the model to load
    */
   public async loadModel(modelId: string): Promise<boolean> {
-    const success = await this.discoveryService.loadModel(modelId);
+    const model = this.availableModels.find(m => m.id === modelId || m.name === modelId);
+    const maxContext = model?.maxContextLength;
+
+    const success = await this.discoveryService.loadModel(modelId, maxContext);
     
     if (success) {
       // Wait a moment for LM Studio to process the load request

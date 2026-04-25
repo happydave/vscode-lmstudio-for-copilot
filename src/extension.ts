@@ -49,6 +49,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('lmStudioCopilot.showReasoningContent')) {
         chatClient.updateConfiguration();
+      } else if (
+        e.affectsConfiguration('lmStudioCopilot.discoveryMaxRetries') ||
+        e.affectsConfiguration('lmStudioCopilot.discoveryBaseRetryDelayMs')
+      ) {
+        discoveryService.updateRetryConfiguration();
       }
     })
   );
@@ -133,13 +138,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 /**
- * Perform model discovery and update UI
+ * Perform model discovery and update UI with rate limiting
  */
 async function performDiscovery(): Promise<void> {
   try {
     await modelManager.updateFromDiscovery();
     
-    const status = await discoveryService.checkConnection();
+    // Use throttled check to prevent rapid successive calls
+    const status = await discoveryService.checkConnectionWithThrottle();
     const modelName = modelManager.getActiveModelName();
     
     statusBarIndicator.updateState(
@@ -156,10 +162,34 @@ async function performDiscovery(): Promise<void> {
 }
 
 /**
- * Handle refresh models command
+ * Handle refresh models command with debouncing
  */
 async function handleRefreshModels(): Promise<void> {
   outputChannel.debug('Refresh models command triggered');
+
+  // Check if we're within the cooldown period (5 seconds)
+  const now = Date.now();
+  const config = vscode.workspace.getConfiguration('lmStudioCopilot');
+  const cooldownMs = config.get<number>('refreshCooldownMs', 5000);
+  
+  // Access last refresh time from discovery service via a helper method
+  // For simplicity, we'll use a module-level variable here
+  if ((handleRefreshModels as any).lastRefreshTime) {
+    const timeSinceLastRefresh = now - (handleRefreshModels as any).lastRefreshTime;
+    if (timeSinceLastRefresh < cooldownMs) {
+      outputChannel.debug(
+        `Refresh too frequent (${timeSinceLastRefresh}ms since last refresh), ignoring`
+      );
+      statusBarIndicator.showStatusMessage(
+        `Refresh ignored. Please wait ${cooldownMs - timeSinceLastRefresh}ms more.`
+      );
+      return;
+    }
+  }
+
+  (handleRefreshModels as any).lastRefreshTime = now;
+  
+  outputChannel.debug('Proceeding with model refresh');
   statusBarIndicator.showStatusMessage('Refreshing models...');
   await performDiscovery();
 }

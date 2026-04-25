@@ -46,7 +46,7 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
           name: model.id,
           family: 'lmstudio-local',
           version: '1',
-          maxInputTokens: model.maxContextLength ?? 4096,
+          maxInputTokens: model.loadedContextLength ?? model.maxContextLength ?? 4096,
           maxOutputTokens: model.maxContextLength ?? 4096,
           capabilities: { toolCalling: true }
         } satisfies vscode.LanguageModelChatInformation));
@@ -95,21 +95,28 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
       this.logger.debug(`  msg[${i}] role=${msg.role} parts=${msg.content.length} types=[${partTypes}]`);
     }
 
-    // --- System prompt guidance for native tool usage ---
-    // Only inject this fallback guidance when no real tools are being forwarded.
-    // When options.tools is non-empty, the tools are sent to LM Studio directly and
-    // the model will discover them from the tool definitions; injecting a separate
-    // system prompt listing a subset of tool names causes conflicts.
+    // --- System prompt guidance for tool awareness ---
+    // When real tools are forwarded, inject a dynamic listing of available tools so
+    // the model can enumerate and acknowledge them. Tools are also sent as OpenAI
+    // function definitions, but some models (e.g. Qwen) may only recognise tools
+    // that are explicitly described in the system prompt text.
+    // When no real tools are present, fall back to a static guidance prompt.
     const config = vscode.workspace.getConfiguration('lmStudioCopilot');
     const enableToolGuidance = config.get<boolean>('toolGuidanceEnabled', true);
     const hasRealTools = (options.tools?.length ?? 0) > 0;
     let systemPrompt: string | undefined;
 
-    if (enableToolGuidance && !hasRealTools) {
-      systemPrompt = `You are an AI programming assistant integrated with VS Code. You have access to native tools for file operations that trigger VS Code diff tracking:\n\n- create_file: Create new files with content (triggers VS Code diff tracking)\n- replace_string_in_file: Edit existing files by replacing text blocks (preferred for most edits)\n- insert_edit_into_file: Insert code into files when replacements fail\n\nWhen writing or modifying files, prefer using these tools over shell commands. Shell commands bypass VS Code's file system and will not show diffs in the editor.`;
-      this.logger.debug('System prompt guidance enabled (no real tools forwarded)');
-    } else if (hasRealTools) {
-      this.logger.debug(`Skipping system prompt guidance: ${options.tools!.length} real tools will be forwarded`);
+    if (enableToolGuidance) {
+      if (hasRealTools) {
+        const toolList = options.tools!
+          .map(t => `- ${t.name}: ${t.description}`)
+          .join('\n');
+        systemPrompt = `You are an AI programming assistant integrated with VS Code.\n\nYou have access to the following tools:\n\n${toolList}\n\nUse these tools to complete tasks. Prefer them over shell commands for file operations.`;
+        this.logger.debug(`Injecting dynamic tool-listing system prompt for ${options.tools!.length} tools`);
+      } else {
+        systemPrompt = `You are an AI programming assistant integrated with VS Code. You have access to native tools for file operations that trigger VS Code diff tracking:\n\n- create_file: Create new files with content (triggers VS Code diff tracking)\n- replace_string_in_file: Edit existing files by replacing text blocks (preferred for most edits)\n- insert_edit_into_file: Insert code into files when replacements fail\n\nWhen writing or modifying files, prefer using these tools over shell commands. Shell commands bypass VS Code's file system and will not show diffs in the editor.`;
+        this.logger.debug('Static tool guidance enabled (no real tools forwarded)');
+      }
     }
 
     // --- Path A: full message conversion ---
@@ -181,8 +188,11 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
 
     // Truncate chatMessages from the front if estimated token count exceeds model limit.
     // Keep the last N messages so the most recent context is preserved.
-    const maxInputTokens = model.maxInputTokens ?? 4096;
-    const tokenBudget = Math.floor(maxInputTokens * 0.75);
+    // Use loadedContextLength if available (most accurate for budget), fallback to maxInputTokens.
+    const activeModel = this.modelManager.getAvailableModels().find(m => m.id === model.id);
+    const effectiveLimit = activeModel?.loadedContextLength ?? model.maxInputTokens ?? 4096;
+    const tokenBudget = Math.floor(effectiveLimit * 0.75);
+    
     let estimatedTotal = chatMessages.reduce((sum, m) => sum + Math.ceil((m.content?.length ?? 0) / 4), 0);
     while (chatMessages.length > 1 && estimatedTotal > tokenBudget) {
       const removed = chatMessages.shift()!;
@@ -191,27 +201,7 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
     }
     this.logger.debug(`Path A: sending ${chatMessages.length} messages, ≈${estimatedTotal} tokens (budget: ${tokenBudget})`);
 
-    // --- Path B: simple flat-text fallback (runs in parallel for diagnostics) ---
-    // Extracts all text from incoming messages ignoring structure, sends as a single user turn.
-    const simpleText = messages
-      .flatMap(msg => msg.content)
-      .filter((p): p is vscode.LanguageModelTextPart => p instanceof vscode.LanguageModelTextPart)
-      .map(p => p.value)
-      .join('\n')
-      .trim();
 
-    // Truncate if too long (rough estimate: 4 chars per token, keep ~75% of context)
-    const simpleEstimated = Math.ceil(simpleText.length / 4);
-    let simpleMessages: ChatMessage[];
-    if (simpleEstimated > tokenBudget) {
-      this.logger.warn(`Path B: text ≈${simpleEstimated} tokens exceeds budget ${tokenBudget}, truncating`);
-      const truncated = simpleText.slice(simpleText.length - Math.floor(simpleText.length * (tokenBudget / simpleEstimated)));
-      simpleMessages = [{ role: 'user', content: truncated }];
-    } else {
-      simpleMessages = simpleText ? [{ role: 'user', content: simpleText }] : [];
-    }
-
-    this.logger.debug(`Path B: ${simpleMessages.length} message(s), ≈${simpleEstimated} tokens`);
 
     // Convert VS Code tool definitions to LM Studio format
     const tools: ToolDefinition[] = (options.tools ?? []).map(t => ({
@@ -359,27 +349,12 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
       return count;
     })();
 
-    const simplePath = (async () => {
-      if (simpleMessages.length === 0) { return '(no text to probe)'; }
-      try {
-        const result = await this.chatClient.completion(model.id, simpleMessages);
-        return result;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        // Surface context-length errors clearly
-        if (msg.includes('n_keep') || msg.includes('n_ctx') || msg.includes('context')) {
-          this.logger.error(`Path B: context length error: ${msg}`);
-          return `(context overflow: model context is too small for this conversation)`;
-        }
-        return `(probe error: ${msg})`;
-      }
-    })();
+
 
     let streamCount: number;
-    let simpleResult: string;
 
     try {
-      [streamCount, simpleResult] = await Promise.all([streamingPath, simplePath]);
+      streamCount = await streamingPath;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error(`Streaming path threw: ${errorMessage}`);
@@ -393,17 +368,12 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
     }
 
     this.logger.debug(`Path A yielded ${streamCount} parts`);
-    this.logger.debug(`Path B result: ${simpleResult.slice(0, 300)}`);
 
-    // If streaming produced nothing, surface the simple probe result so the user sees something
+    // If streaming produced nothing, surface an error to the user
     if (streamCount === 0 && !token.isCancellationRequested) {
-      this.logger.warn(`Path A yielded nothing; surfacing Path B result`);
-      if (simpleResult && !simpleResult.startsWith('(')) {
-        progress.report(new vscode.LanguageModelTextPart(`[Fallback response]\n${simpleResult}`));
-      } else {
-        const reason = conversionError ? `conversion error: ${conversionError}` : simpleResult;
-        progress.report(new vscode.LanguageModelTextPart(`[No response from LM Studio — ${reason}]`));
-      }
+      this.logger.warn(`Path A yielded nothing; reporting no response.`);
+      const reason = conversionError ? `conversion error: ${conversionError}` : "model generated no content";
+      progress.report(new vscode.LanguageModelTextPart(`[No response from LM Studio — ${reason}]`));
     }
   }
 

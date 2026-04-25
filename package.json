@@ -2,7 +2,7 @@
   "name": "lmstudio-for-copilot",
   "displayName": "LM Studio Copilot",
   "description": "VS Code extension providing inline code completion powered by LM Studio models with automatic discovery",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "publisher": "lmstudio",
   "repository": {
     "type": "git",
@@ -95,6 +95,21 @@
           "type": "boolean",
           "default": true,
           "description": "Show reasoning/thinking tokens from models that emit them (e.g., DeepSeek-R1, QwQ). These appear as plain text before the main response."
+        },
+        "lmStudioCopilot.refreshCooldownMs": {
+          "type": "number",
+          "default": 5000,
+          "description": "Minimum time in milliseconds between manual model refreshes to prevent rapid successive API calls"
+        },
+        "lmStudioCopilot.discoveryMaxRetries": {
+          "type": "number",
+          "default": 3,
+          "description": "Maximum number of retry attempts for discovery queries with exponential backoff on failure"
+        },
+        "lmStudioCopilot.discoveryBaseRetryDelayMs": {
+          "type": "number",
+          "default": 1000,
+          "description": "Base delay in milliseconds for exponential backoff retry logic during discovery (doubles with each attempt)"
         }
       }
     },

@@ -87,6 +87,8 @@ export interface ChatCompletionResponse {
  * Supports both streaming (SSE) and non-streaming responses.
  */
 export class ChatClient {
+  private static readonly DEFAULT_TEMPERATURE = 0.7;
+
   private readonly logger: vscode.LogOutputChannel;
   private host: string = 'localhost';
   private port: number = 1234;
@@ -161,7 +163,7 @@ export class ChatClient {
       model: modelId,
       messages,
       stream: true,
-      temperature: 0.2,
+      temperature: ChatClient.DEFAULT_TEMPERATURE,
       max_tokens: -1, // Use model default
       ...(tools && tools.length > 0 ? { tools } : {})
     };
@@ -325,7 +327,7 @@ export class ChatClient {
       model: modelId,
       messages,
       stream: false,
-      temperature: 0.2,
+      temperature: ChatClient.DEFAULT_TEMPERATURE,
       max_tokens: -1
     };
 
