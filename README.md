@@ -84,10 +84,6 @@ make test
 
 Tests use Jest and cover discovery service functionality.
 
-## License
-
-MIT
-
 ## Contributing
 
 Contributions are welcome. This extension follows structured development patterns defined in the framework documentation.
