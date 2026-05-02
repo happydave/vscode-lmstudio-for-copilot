@@ -2,7 +2,7 @@
   "name": "lmstudio-for-copilot",
   "displayName": "LM Studio Copilot",
   "description": "VS Code extension providing inline code completion powered by LM Studio models with automatic discovery",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "publisher": "lmstudio",
   "repository": {
     "type": "git",

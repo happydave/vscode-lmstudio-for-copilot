@@ -54,15 +54,21 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
       );
 
       const modelInfo: vscode.LanguageModelChatInformation[] = availableModels
-        .map((model) => ({
-          id: model.id,
-          name: model.id,
-          family: 'lmstudio-local',
-          version: '1',
-          maxInputTokens: model.loadedContextLength ?? model.maxContextLength ?? 4096,
-          maxOutputTokens: model.maxContextLength ?? 4096,
-          capabilities: { toolCalling: true }
-        } satisfies vscode.LanguageModelChatInformation));
+        .map((model) => {
+          const totalContext = model.loadedContextLength ?? model.maxContextLength ?? 4096;
+          // Reserve room for large code generation (up to 32k) while keeping total display accurate
+          const outputReservation = Math.min(32768, Math.floor(totalContext / 4));
+          
+          return {
+            id: model.id,
+            name: model.id,
+            family: 'lmstudio-local',
+            version: '1',
+            maxInputTokens: totalContext - outputReservation,
+            maxOutputTokens: outputReservation,
+            capabilities: { toolCalling: true }
+          } satisfies vscode.LanguageModelChatInformation;
+        });
 
       return modelInfo;
     } catch (error) {

@@ -48,7 +48,9 @@ export class RequestBuilder {
     let chatMessages = this.convertMessages(messages, systemPrompt);
 
     // 3. Resolve budget parameters
-    const effectiveLimit = activeModel?.loadedContextLength ?? model.maxInputTokens ?? 4096;
+    const totalLimit = activeModel?.loadedContextLength ?? (model.maxInputTokens + model.maxOutputTokens);
+    const outputReservation = Math.min(32768, Math.floor(totalLimit / 4));
+    const effectiveLimit = totalLimit - outputReservation;
     const modelFamily = this.tokenizer.detectFamily(model.id, activeModel?.architecture);
     
     const stratMap = config.get<Record<string, string>>('modelTruncationStrategies', { '*': 'conservative' });
