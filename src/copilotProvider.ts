@@ -3,6 +3,7 @@ import { ModelManager } from './modelManager';
 import { ChatClient, ChatMessage, ToolDefinition } from './chatClient';
 import { Tokenizer } from './tokenizer';
 import { RequestBuilder } from './requestBuilder';
+import { ContextManager } from './contextManager';
 import { isContextOverflowError, isConnectionError, isTimeoutError } from './errors';
 
 /**
@@ -15,6 +16,7 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
   private readonly chatClient: ChatClient;
   private readonly tokenizer: Tokenizer;
   private readonly requestBuilder: RequestBuilder;
+  private readonly contextManager: ContextManager;
   private readonly _onDidChangeLanguageModelChatInformation = new vscode.EventEmitter<void>();
   public readonly onDidChangeLanguageModelChatInformation = this._onDidChangeLanguageModelChatInformation.event;
 
@@ -23,13 +25,15 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
     modelManager: ModelManager,
     chatClient: ChatClient,
     tokenizer: Tokenizer,
-    requestBuilder: RequestBuilder
+    requestBuilder: RequestBuilder,
+    contextManager: ContextManager
   ) {
     this.logger = logger;
     this.modelManager = modelManager;
     this.chatClient = chatClient;
     this.tokenizer = tokenizer;
     this.requestBuilder = requestBuilder;
+    this.contextManager = contextManager;
   }
 
   /**
@@ -97,14 +101,18 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
   ): Promise<void> {
     this.logger.debug(`provideLanguageModelChatResponse: model=${model.id}, messages=${messages.length}, tools=${options.tools?.length ?? 0}`);
 
-    // 1. Prepare request using RequestBuilder
+    // 1. Gather workspace context (async, non-blocking — empty string if disabled or unavailable)
+    const activeFilePath = vscode.window.activeTextEditor?.document.uri.fsPath;
+    const workspaceContext = await this.contextManager.buildContext(activeFilePath, model.id);
+
+    // 2. Prepare request using RequestBuilder
     const activeModel = this.modelManager.getAvailableModels().find(m => m.id === model.id);
     const { 
       chatMessages, 
       tools, 
       totalCharsSent, 
       effectiveLimit 
-    } = this.requestBuilder.buildRequest(messages, options, model, activeModel);
+    } = this.requestBuilder.buildRequest(messages, options, model, activeModel, workspaceContext);
 
     // 2. Execute streaming completion request
     const streamingPath = (async () => {

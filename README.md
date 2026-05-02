@@ -22,6 +22,7 @@ The extension connects to LM Studio's local API server (default: `http://localho
 
 - **Automatic Discovery**: Detects LM Studio at startup and monitors for availability
 - **Model Auto-Selection**: Uses whichever model is currently loaded in LM Studio's UI
+- **Workspace Context Prioritization**: Automatically includes the most relevant workspace files in the prompt context based on recency, proximity, and relevance heuristics.
 - **Real-time Streaming**: Responses stream live as tokens are generated
 
 - Use `0` (default) to disable timeout entirely
@@ -32,6 +33,11 @@ The extension connects to LM Studio's local API server (default: `http://localho
 - Verify you're editing a supported file type (JS, TS, Python, Go, Rust, Java, C#)
 - Check that `lmStudioCopilot.enableSuggestions` is `true` in settings
 - Try Command Palette → "LM Studio: Refresh Models"
+
+**Adjusting Context Injection**
+- By default, the extension automatically injects relevant workspace files into the chat context.
+- To disable this, set `lmStudioCopilot.enableContextPrioritization` to `false` or use the **"LM Studio: Toggle Context Prioritization"** command.
+- To change the total amount of context allowed, adjust `lmStudioCopilot.contextTokenBudget` (default 20,000 tokens).
 
 **See "Refresh ignored" message when clicking refresh button**
 - This is expected behavior - the extension throttles rapid refresh attempts to prevent API overload

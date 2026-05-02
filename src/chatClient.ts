@@ -209,6 +209,8 @@ export class ChatClient {
       let buffer = '';
       let totalChunks = 0;
       let totalYielded = 0;
+      let contentDeltas = 0;
+      let reasoningDeltas = 0;
 
       // Accumulated tool call fragments keyed by delta index
       const toolCallAccumulator = new Map<number, { id: string; name: string; arguments: string }>();
@@ -278,12 +280,6 @@ export class ChatClient {
             const chunk = parsed;
 
             for (const choice of chunk.choices) {
-              const d = choice.delta as Record<string, unknown>;
-              const deltaKeys = Object.keys(d);
-              const contentVal = JSON.stringify(d['content'])?.slice(0, 80);
-              const reasoningVal = JSON.stringify(d['reasoning_content'])?.slice(0, 80);
-              this.logger.debug(`chunk delta keys=[${deltaKeys.join(',')}] content=${contentVal} reasoning=${reasoningVal} finish=${choice.finish_reason}`);
-
               // Accumulate tool call fragments
               if (choice.delta?.tool_calls) {
                 for (const tc of choice.delta.tool_calls) {
@@ -297,19 +293,21 @@ export class ChatClient {
               }
 
               // Yield reasoning/thinking tokens if enabled and present
-              const reasoningContent = d['reasoning_content'] as string | undefined;
+              const reasoningContent = (choice.delta as any)?.reasoning_content as string | undefined;
               if (this.showReasoningContent && reasoningContent) {
+                reasoningDeltas++;
                 totalYielded++;
                 yield { kind: 'text', content: reasoningContent };
               }
 
               if (choice.delta?.content) {
+                contentDeltas++;
                 totalYielded++;
                 yield { kind: 'text', content: choice.delta.content };
               }
 
               if (choice.finish_reason !== null) {
-                this.logger.debug(`finish_reason=${choice.finish_reason} after ${totalChunks} chunks, ${totalYielded} text yields, ${toolCallAccumulator.size} tool calls`);
+                this.logger.debug(`Stream complete: finish_reason=${choice.finish_reason}, chunks=${totalChunks}, content_deltas=${contentDeltas}, reasoning_deltas=${reasoningDeltas}, yields=${totalYielded}, tools=${toolCallAccumulator.size}`);
                 for (const [, tc] of toolCallAccumulator) {
                   yield { kind: 'toolCall', id: tc.id, name: tc.name, arguments: tc.arguments };
                 }

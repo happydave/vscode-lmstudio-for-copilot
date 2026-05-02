@@ -2,7 +2,7 @@
   "name": "lmstudio-for-copilot",
   "displayName": "LM Studio Copilot",
   "description": "VS Code extension providing inline code completion powered by LM Studio models with automatic discovery",
-  "version": "0.1.6",
+  "version": "0.1.8",
   "publisher": "lmstudio",
   "repository": {
     "type": "git",
@@ -50,6 +50,11 @@
       {
         "command": "lmstudio.openOutput",
         "title": "LM Studio: Open Output Channel",
+        "category": "LM Studio"
+      },
+      {
+        "command": "lmstudio.toggleContextPrioritization",
+        "title": "LM Studio: Toggle Context Prioritization",
         "category": "LM Studio"
       }
     ],
@@ -132,6 +137,16 @@
           "type": "object",
           "default": {},
           "description": "Manual overrides for model family classification (e.g. { 'my-model': 'llama' })."
+        },
+        "lmStudioCopilot.enableContextPrioritization": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically include relevant workspace files in the prompt context sent to LM Studio. Disable to turn off context injection entirely."
+        },
+        "lmStudioCopilot.contextTokenBudget": {
+          "type": "number",
+          "default": 20000,
+          "description": "Maximum number of tokens to spend on injected workspace context per request."
         }
       }
     },

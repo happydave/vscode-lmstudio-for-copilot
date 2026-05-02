@@ -6,6 +6,7 @@ import { StatusBarIndicator } from './statusBarIndicator';
 import { LMStudioCopilotProvider } from './copilotProvider';
 import { Tokenizer } from './tokenizer';
 import { RequestBuilder } from './requestBuilder';
+import { ContextManager } from './contextManager';
 
 let outputChannel: vscode.LogOutputChannel;
 let discoveryService: DiscoveryService;
@@ -15,6 +16,7 @@ let statusBarIndicator: StatusBarIndicator;
 let copilotProvider: LMStudioCopilotProvider;
 let tokenizer: Tokenizer;
 let requestBuilder: RequestBuilder;
+let contextManager: ContextManager;
 
 /**
  * Main extension activation - runs when extension first loads
@@ -31,6 +33,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   statusBarIndicator = new StatusBarIndicator(outputChannel);
   tokenizer = new Tokenizer(outputChannel, context.globalState);
   requestBuilder = new RequestBuilder(outputChannel, tokenizer);
+  contextManager = new ContextManager(outputChannel, tokenizer);
 
   // Get connection settings from configuration
   const config = vscode.workspace.getConfiguration('lmStudioCopilot');
@@ -81,8 +84,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lmstudio.toggleContextPrioritization', async () => {
+      const config = vscode.workspace.getConfiguration('lmStudioCopilot');
+      const current = config.get<boolean>('enableContextPrioritization', true);
+      await config.update('enableContextPrioritization', !current, vscode.ConfigurationTarget.Global);
+      void vscode.window.showInformationMessage(
+        `LM Studio Context Prioritization: ${!current ? 'Enabled' : 'Disabled'}`
+      );
+    })
+  );
+
   // Register Copilot provider
-  copilotProvider = new LMStudioCopilotProvider(outputChannel, modelManager, chatClient, tokenizer, requestBuilder);
+  copilotProvider = new LMStudioCopilotProvider(outputChannel, modelManager, chatClient, tokenizer, requestBuilder, contextManager);
   
   try {
     const copilotRegistration = vscode.lm.registerLanguageModelChatProvider(
@@ -123,17 +137,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         outputChannel.info(`Configuration updated: host=${newHost}, port=${newPort}, timeout=${newTimeout}ms`);
         performDiscovery().catch(error => {
           outputChannel.error(`Discovery after config change failed: ${error}`);
-        });
-      }
-    })
-  );
-
-  // Re-check when the VS Code window regains focus (e.g. after interacting with LM Studio)
-  context.subscriptions.push(
-    vscode.window.onDidChangeWindowState(state => {
-      if (state.focused) {
-        performDiscovery().catch(error => {
-          outputChannel.error(`Discovery on window focus failed: ${error}`);
         });
       }
     })

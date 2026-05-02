@@ -36,12 +36,13 @@ export class RequestBuilder {
     messages: readonly vscode.LanguageModelChatRequestMessage[],
     options: vscode.ProvideLanguageModelChatResponseOptions,
     model: vscode.LanguageModelChatInformation,
-    activeModel: ModelInfo | undefined
+    activeModel: ModelInfo | undefined,
+    workspaceContext?: string
   ): BuiltRequest {
     const config = vscode.workspace.getConfiguration('lmStudioCopilot');
     
     // 1. Generate System Prompt
-    const systemPrompt = this.generateSystemPrompt(options, config);
+    const systemPrompt = this.generateSystemPrompt(options, config, workspaceContext);
 
     // 2. Convert VS Code messages to LM Studio format
     let chatMessages = this.convertMessages(messages, systemPrompt);
@@ -105,22 +106,26 @@ export class RequestBuilder {
 
   private generateSystemPrompt(
     options: vscode.ProvideLanguageModelChatResponseOptions,
-    config: vscode.WorkspaceConfiguration
+    config: vscode.WorkspaceConfiguration,
+    workspaceContext?: string
   ): string | undefined {
     const enableToolGuidance = config.get<boolean>('toolGuidanceEnabled', true);
     const hasRealTools = (options.tools?.length ?? 0) > 0;
+    const contextPrefix = workspaceContext ? `${workspaceContext}\n\n` : '';
 
-    if (!enableToolGuidance) return undefined;
+    if (!enableToolGuidance) {
+      return workspaceContext ? workspaceContext : undefined;
+    }
 
     if (hasRealTools) {
       const toolList = options.tools!
         .map(t => `- ${t.name}: ${t.description}`)
         .join('\n');
       this.logger.debug(`Injecting dynamic tool-listing system prompt for ${options.tools!.length} tools`);
-      return `You are an AI programming assistant integrated with VS Code.\n\nYou have access to the following tools:\n\n${toolList}\n\nUse these tools to complete tasks. Prefer them over shell commands for file operations.`;
+      return `${contextPrefix}You are an AI programming assistant integrated with VS Code.\n\nYou have access to the following tools:\n\n${toolList}\n\nUse these tools to complete tasks. Prefer them over shell commands for file operations.`;
     } else {
       this.logger.debug('Static tool guidance enabled (no real tools forwarded)');
-      return `You are an AI programming assistant integrated with VS Code. You have access to native tools for file operations that trigger VS Code diff tracking:\n\n- create_file: Create new files with content (triggers VS Code diff tracking)\n- replace_string_in_file: Edit existing files by replacing text blocks (preferred for most edits)\n- insert_edit_into_file: Insert code into files when replacements fail\n\nWhen writing or modifying files, prefer using these tools over shell commands. Shell commands bypass VS Code's file system and will not show diffs in the editor.`;
+      return `${contextPrefix}You are an AI programming assistant integrated with VS Code. You have access to native tools for file operations that trigger VS Code diff tracking:\n\n- create_file: Create new files with content (triggers VS Code diff tracking)\n- replace_string_in_file: Edit existing files by replacing text blocks (preferred for most edits)\n- insert_edit_into_file: Insert code into files when replacements fail\n\nWhen writing or modifying files, prefer using these tools over shell commands. Shell commands bypass VS Code's file system and will not show diffs in the editor.`;
     }
   }
 
