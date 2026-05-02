@@ -1,0 +1,15 @@
+node_modules/
+src/
+test/
+.git/
+.gitignore
+.vscode/
+*.vsix
+.DS_Store
+Makefile
+Dockerfile.dev
+jest.config.js
+tsconfig.json
+.eslintrc.json
+docs/
+package-lock.json
