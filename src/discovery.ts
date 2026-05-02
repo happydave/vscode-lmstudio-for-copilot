@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { ConnectionError, TimeoutError, APIError, ParseError, isRetryableError } from './errors';
 
 export enum ConnectionState {
   Connected = 'connected',
@@ -11,6 +12,7 @@ export class ModelInfo {
     public id: string,
     public name: string,
     public loaded: boolean,
+    public architecture?: string,
     public object?: string,
     public maxContextLength?: number,
     public loadedContextLength?: number,
@@ -155,13 +157,21 @@ export class DiscoveryService {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
       signal: this.requestTimeout > 0 ? AbortSignal.timeout(this.requestTimeout) : undefined
+    }).catch(err => {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (err.name === 'AbortError' || msg.includes('timeout') || msg.includes('terminated')) {
+        throw new TimeoutError(this.requestTimeout);
+      }
+      throw new ConnectionError(msg, err);
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP status ${response.status}: ${response.statusText}`);
+      throw new APIError(`HTTP status ${response.status}: ${response.statusText}`, response.status);
     }
 
-    const body = await response.json() as LMStudioModelsResponse;
+    const body = await response.json().catch(err => {
+      throw new ParseError(err instanceof Error ? err.message : String(err));
+    }) as LMStudioModelsResponse;
     const modelsData = body.models;
     this.logger.debug(`Found ${modelsData.length} models in LM Studio`);
 
@@ -171,6 +181,7 @@ export class DiscoveryService {
         id: model.key,
         name: model.display_name || model.key,
         loaded: !!loadedInstance,
+        architecture: model.architecture || undefined,
         object: 'model',
         maxContextLength: model.max_context_length || undefined,
         loadedContextLength: loadedInstance?.config?.context_length || undefined,
@@ -211,34 +222,36 @@ export class DiscoveryService {
    * Retries failed connection attempts with increasing delays.
    */
   private async checkConnectionWithRetry(): Promise<LMStudioStatus> {
-    let lastError: Error | null = null;
+    let lastError: unknown = null;
 
     for (let attempt = 0; attempt < this.MAX_RETRIES; attempt++) {
       try {
         return await this.fetchConnectionStatus();
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
+      } catch (error: any) {
+        lastError = error;
         
-        if (attempt === this.MAX_RETRIES - 1) {
-          // Last attempt, throw the error
+        if (attempt === this.MAX_RETRIES - 1 || !isRetryableError(error)) {
+          // Last attempt or not retryable, break
           break;
         }
 
         const delay = this.BASE_RETRY_DELAY_MS * Math.pow(2, attempt); // 1s, 2s, 4s
+        const msg = error instanceof Error ? error.message : String(error);
         this.logger.debug(
-          `Connection check failed (attempt ${attempt + 1}/${this.MAX_RETRIES}), retrying in ${delay}ms: ${lastError.message}`
+          `Connection check failed (attempt ${attempt + 1}/${this.MAX_RETRIES}), retrying in ${delay}ms: ${msg}`
         );
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
 
-    // All retries exhausted, return disconnected state with error
-    this.logger.warn(`Connection check failed after ${this.MAX_RETRIES} attempts: ${lastError?.message}`);
+    // All retries exhausted or non-retryable error, return disconnected state
+    const finalMsg = lastError instanceof Error ? lastError.message : String(lastError);
+    this.logger.warn(`Connection check failed: ${finalMsg}`);
     
     return {
       connectionState: ConnectionState.Disconnected,
       availableModels: [],
-      errorMessage: lastError?.message || 'Unknown connection error'
+      errorMessage: finalMsg || 'Unknown connection error'
     };
   }
 

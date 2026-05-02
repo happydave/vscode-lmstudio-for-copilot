@@ -4,6 +4,8 @@ import { ModelManager } from './modelManager';
 import { ChatClient } from './chatClient';
 import { StatusBarIndicator } from './statusBarIndicator';
 import { LMStudioCopilotProvider } from './copilotProvider';
+import { Tokenizer } from './tokenizer';
+import { RequestBuilder } from './requestBuilder';
 
 let outputChannel: vscode.LogOutputChannel;
 let discoveryService: DiscoveryService;
@@ -11,6 +13,8 @@ let modelManager: ModelManager;
 let chatClient: ChatClient;
 let statusBarIndicator: StatusBarIndicator;
 let copilotProvider: LMStudioCopilotProvider;
+let tokenizer: Tokenizer;
+let requestBuilder: RequestBuilder;
 
 /**
  * Main extension activation - runs when extension first loads
@@ -25,6 +29,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   modelManager = new ModelManager(outputChannel, discoveryService);
   chatClient = new ChatClient(outputChannel);
   statusBarIndicator = new StatusBarIndicator(outputChannel);
+  tokenizer = new Tokenizer(outputChannel, context.globalState);
+  requestBuilder = new RequestBuilder(outputChannel, tokenizer);
 
   // Get connection settings from configuration
   const config = vscode.workspace.getConfiguration('lmStudioCopilot');
@@ -54,6 +60,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         e.affectsConfiguration('lmStudioCopilot.discoveryBaseRetryDelayMs')
       ) {
         discoveryService.updateRetryConfiguration();
+      } else if (e.affectsConfiguration('lmStudioCopilot.modelFamilyOverrides')) {
+        tokenizer.loadConfiguration();
       }
     })
   );
@@ -74,7 +82,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   // Register Copilot provider
-  copilotProvider = new LMStudioCopilotProvider(outputChannel, modelManager, chatClient);
+  copilotProvider = new LMStudioCopilotProvider(outputChannel, modelManager, chatClient, tokenizer, requestBuilder);
   
   try {
     const copilotRegistration = vscode.lm.registerLanguageModelChatProvider(

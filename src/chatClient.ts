@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { ConnectionError, TimeoutError, ContextOverflowError, APIError, ParseError } from './errors';
 
 /**
  * Chat message for LM Studio API.
@@ -31,7 +32,8 @@ export interface ToolDefinition {
  */
 export type StreamPart =
   | { kind: 'text'; content: string }
-  | { kind: 'toolCall'; id: string; name: string; arguments: string };
+  | { kind: 'toolCall'; id: string; name: string; arguments: string }
+  | { kind: 'usage'; promptTokens: number; completionTokens: number; totalTokens: number };
 
 /**
  * Request body for LM Studio chat completion endpoint.
@@ -187,7 +189,12 @@ export class ChatClient {
       if (!response.ok) {
         const errorText = await response.text();
         this.logger.error(`LM Studio returned HTTP ${response.status}: ${errorText}`);
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        
+        if (errorText.includes('Context size has been exceeded')) {
+          throw new ContextOverflowError(errorText);
+        }
+        
+        throw new APIError(`HTTP ${response.status}: ${errorText}`, response.status);
       }
 
       this.logger.debug(`Response status: ${response.status}, content-type: ${response.headers?.get('content-type')}`);
@@ -243,12 +250,29 @@ export class ChatClient {
           }
 
           try {
-            const parsed = JSON.parse(rawData) as StreamingChunk & { error?: { message?: string } };
+            const parsed = JSON.parse(rawData) as StreamingChunk & { 
+              error?: { message?: string },
+              usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
+            };
             totalChunks++;
 
             if (parsed.error) {
               this.logger.error(`LM Studio error in stream: ${parsed.error.message}`);
-              throw new Error(parsed.error.message ?? 'Unknown LM Studio error');
+              const msg = parsed.error.message ?? 'Unknown LM Studio error';
+              if (msg.includes('Context size has been exceeded')) {
+                throw new ContextOverflowError(msg);
+              }
+              throw new APIError(msg, 400); // SSE errors are usually 400s or 500s
+            }
+
+            // Yield usage data if present (often in the final chunk)
+            if (parsed.usage) {
+              yield { 
+                kind: 'usage', 
+                promptTokens: parsed.usage.prompt_tokens, 
+                completionTokens: parsed.usage.completion_tokens,
+                totalTokens: parsed.usage.total_tokens
+              };
             }
 
             const chunk = parsed;
@@ -299,17 +323,26 @@ export class ChatClient {
         }
       }
 
-    } catch (error) {
+    } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Chat completion streaming failed: ${errorMessage}`);
-
-      // "terminated" is the Node.js error message for AbortSignal.timeout() expiry
-      if (errorMessage === 'terminated' || errorMessage.includes('timed out')) {
-        throw new Error(`LM Studio request timed out after ${this.requestTimeout / 1000}s. Set lmStudioCopilot.disableAllTimeouts=true to remove the limit.`);
+      
+      if (error instanceof ContextOverflowError || error instanceof APIError) {
+        throw error;
       }
 
-      // Re-throw to allow caller to handle error
-      throw new Error(`LM Studio chat error: ${errorMessage}`);
+      this.logger.error(`Chat completion streaming failed: ${errorMessage}`);
+
+      // Check for fetch/network errors
+      if (error.name === 'AbortError' || errorMessage.includes('terminated') || errorMessage.includes('timed out')) {
+        throw new TimeoutError(this.requestTimeout);
+      }
+      
+      if (errorMessage.includes('fetch failed') || errorMessage.includes('ECONNREFUSED')) {
+        throw new ConnectionError(errorMessage, error);
+      }
+
+      // Re-throw as generic LMStudioError if not already specialized
+      throw new APIError(`LM Studio chat error: ${errorMessage}`, 500);
     }
   }
 
@@ -320,7 +353,7 @@ export class ChatClient {
   public async completion(
     modelId: string,
     messages: ChatMessage[]
-  ): Promise<string> {
+  ): Promise<{ content: string; usage?: { promptTokens: number; completionTokens: number; totalTokens: number } }> {
     this.logger.debug(`Non-streaming completion request for model ${modelId}`);
 
     const request: ChatCompletionRequest = {
@@ -344,21 +377,46 @@ export class ChatClient {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP status ${response.status}: ${await response.text()}`);
+        const errorText = await response.text();
+        if (errorText.includes('Context size has been exceeded')) {
+          throw new ContextOverflowError(errorText);
+        }
+        throw new APIError(`HTTP status ${response.status}: ${errorText}`, response.status);
       }
 
       const result = await response.json() as ChatCompletionResponse;
       
       if (result.choices && result.choices.length > 0) {
-        return result.choices[0].message.content;
+        return {
+          content: result.choices[0].message.content,
+          usage: result.usage ? {
+            promptTokens: result.usage.prompt_tokens,
+            completionTokens: result.usage.completion_tokens,
+            totalTokens: result.usage.total_tokens
+          } : undefined
+        };
       }
 
-      throw new Error('No choices in chat completion response');
+      throw new ParseError('No choices in chat completion response');
 
-    } catch (error) {
+    } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      if (error instanceof ContextOverflowError || error instanceof APIError || error instanceof ParseError) {
+        throw error;
+      }
+
       this.logger.error(`Chat completion failed: ${errorMessage}`);
-      throw error;
+      
+      if (error.name === 'AbortError' || errorMessage.includes('terminated') || errorMessage.includes('timed out')) {
+        throw new TimeoutError(this.requestTimeout);
+      }
+
+      if (errorMessage.includes('fetch failed') || errorMessage.includes('ECONNREFUSED')) {
+        throw new ConnectionError(errorMessage, error);
+      }
+
+      throw new APIError(errorMessage, 500);
     }
   }
 

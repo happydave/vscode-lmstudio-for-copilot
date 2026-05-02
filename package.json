@@ -2,7 +2,7 @@
   "name": "lmstudio-for-copilot",
   "displayName": "LM Studio Copilot",
   "description": "VS Code extension providing inline code completion powered by LM Studio models with automatic discovery",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "publisher": "lmstudio",
   "repository": {
     "type": "git",
@@ -110,6 +110,28 @@
           "type": "number",
           "default": 1000,
           "description": "Base delay in milliseconds for exponential backoff retry logic during discovery (doubles with each attempt)"
+        },
+        "lmStudioCopilot.truncation.conservativeBuffer": {
+          "type": "number",
+          "default": 15,
+          "description": "Safety buffer percentage for conservative strategy. Target context usage: 85%."
+        },
+        "lmStudioCopilot.truncation.aggressiveBuffer": {
+          "type": "number",
+          "default": 35,
+          "description": "Safety buffer percentage for aggressive strategy. Target context usage: 65%."
+        },
+        "lmStudioCopilot.modelTruncationStrategies": {
+          "type": "object",
+          "default": {
+            "*": "conservative"
+          },
+          "description": "Map of model IDs to truncation strategies ('conservative' or 'aggressive'). Use '*' for default."
+        },
+        "lmStudioCopilot.modelFamilyOverrides": {
+          "type": "object",
+          "default": {},
+          "description": "Manual overrides for model family classification (e.g. { 'my-model': 'llama' })."
         }
       }
     },

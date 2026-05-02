@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { ModelManager } from './modelManager';
 import { ChatClient, ChatMessage, ToolDefinition } from './chatClient';
+import { Tokenizer } from './tokenizer';
+import { RequestBuilder } from './requestBuilder';
+import { isContextOverflowError, isConnectionError, isTimeoutError } from './errors';
 
 /**
  * LM Studio Copilot Provider - Implements VS Code's LanguageModelChatProvider interface
@@ -10,17 +13,23 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
   private readonly logger: vscode.LogOutputChannel;
   private readonly modelManager: ModelManager;
   private readonly chatClient: ChatClient;
+  private readonly tokenizer: Tokenizer;
+  private readonly requestBuilder: RequestBuilder;
   private readonly _onDidChangeLanguageModelChatInformation = new vscode.EventEmitter<void>();
   public readonly onDidChangeLanguageModelChatInformation = this._onDidChangeLanguageModelChatInformation.event;
 
   constructor(
     logger: vscode.LogOutputChannel,
     modelManager: ModelManager,
-    chatClient: ChatClient
+    chatClient: ChatClient,
+    tokenizer: Tokenizer,
+    requestBuilder: RequestBuilder
   ) {
     this.logger = logger;
     this.modelManager = modelManager;
     this.chatClient = chatClient;
+    this.tokenizer = tokenizer;
+    this.requestBuilder = requestBuilder;
   }
 
   /**
@@ -88,135 +97,16 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
   ): Promise<void> {
     this.logger.debug(`provideLanguageModelChatResponse: model=${model.id}, messages=${messages.length}, tools=${options.tools?.length ?? 0}`);
 
-    // Log raw incoming message structure
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      const partTypes = msg.content.map((p: unknown) => (p as object).constructor?.name ?? typeof p).join(', ');
-      this.logger.debug(`  msg[${i}] role=${msg.role} parts=${msg.content.length} types=[${partTypes}]`);
-    }
-
-    // --- System prompt guidance for tool awareness ---
-    // When real tools are forwarded, inject a dynamic listing of available tools so
-    // the model can enumerate and acknowledge them. Tools are also sent as OpenAI
-    // function definitions, but some models (e.g. Qwen) may only recognise tools
-    // that are explicitly described in the system prompt text.
-    // When no real tools are present, fall back to a static guidance prompt.
-    const config = vscode.workspace.getConfiguration('lmStudioCopilot');
-    const enableToolGuidance = config.get<boolean>('toolGuidanceEnabled', true);
-    const hasRealTools = (options.tools?.length ?? 0) > 0;
-    let systemPrompt: string | undefined;
-
-    if (enableToolGuidance) {
-      if (hasRealTools) {
-        const toolList = options.tools!
-          .map(t => `- ${t.name}: ${t.description}`)
-          .join('\n');
-        systemPrompt = `You are an AI programming assistant integrated with VS Code.\n\nYou have access to the following tools:\n\n${toolList}\n\nUse these tools to complete tasks. Prefer them over shell commands for file operations.`;
-        this.logger.debug(`Injecting dynamic tool-listing system prompt for ${options.tools!.length} tools`);
-      } else {
-        systemPrompt = `You are an AI programming assistant integrated with VS Code. You have access to native tools for file operations that trigger VS Code diff tracking:\n\n- create_file: Create new files with content (triggers VS Code diff tracking)\n- replace_string_in_file: Edit existing files by replacing text blocks (preferred for most edits)\n- insert_edit_into_file: Insert code into files when replacements fail\n\nWhen writing or modifying files, prefer using these tools over shell commands. Shell commands bypass VS Code's file system and will not show diffs in the editor.`;
-        this.logger.debug('Static tool guidance enabled (no real tools forwarded)');
-      }
-    }
-
-    // --- Path A: full message conversion ---
-    let chatMessages: ChatMessage[] = [];
-    let conversionError: string | undefined;
-
-    try {
-      // Add system prompt if configured
-      if (systemPrompt) {
-        chatMessages.push({ role: 'system', content: systemPrompt });
-      }
-
-      for (const msg of messages) {
-        if (msg.role === vscode.LanguageModelChatMessageRole.Assistant) {
-          const textParts: string[] = [];
-          const toolCalls: NonNullable<ChatMessage['tool_calls']> = [];
-
-          for (const part of msg.content) {
-            if (part instanceof vscode.LanguageModelTextPart) {
-              textParts.push(part.value);
-            } else if (part instanceof vscode.LanguageModelToolCallPart) {
-              toolCalls.push({
-                id: part.callId,
-                type: 'function',
-                function: { name: part.name, arguments: JSON.stringify(part.input) }
-              });
-            }
-          }
-
-          const assistantMsg: ChatMessage = { role: 'assistant', content: textParts.join('') || null };
-          if (toolCalls.length > 0) {
-            assistantMsg.tool_calls = toolCalls;
-          }
-          chatMessages.push(assistantMsg);
-
-        } else {
-          // User role: split tool results and text into separate messages
-          const textParts: string[] = [];
-
-          for (const part of msg.content) {
-            if (part instanceof vscode.LanguageModelToolResultPart) {
-              const resultContent = part.content
-                .map(p => p instanceof vscode.LanguageModelTextPart ? p.value : '')
-                .join('');
-              chatMessages.push({ role: 'tool', content: resultContent, tool_call_id: part.callId });
-            } else if (part instanceof vscode.LanguageModelTextPart) {
-              textParts.push(part.value);
-            }
-          }
-
-          const text = textParts.join('');
-          if (text) {
-            chatMessages.push({ role: 'user', content: text });
-          }
-        }
-      }
-    } catch (err) {
-      conversionError = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Message conversion error: ${conversionError}`);
-      chatMessages = [];
-    }
-
-    this.logger.debug(`Path A: converted ${messages.length} VS Code messages → ${chatMessages.length} LM Studio messages`);
-    for (let i = 0; i < chatMessages.length; i++) {
-      const m = chatMessages[i];
-      const preview = typeof m.content === 'string' ? m.content.slice(0, 100) : '(null)';
-      this.logger.debug(`  chatMsg[${i}] role=${m.role} tool_calls=${m.tool_calls?.length ?? 0} content=${JSON.stringify(preview)}`);
-    }
-
-    // Truncate chatMessages from the front if estimated token count exceeds model limit.
-    // Keep the last N messages so the most recent context is preserved.
-    // Use loadedContextLength if available (most accurate for budget), fallback to maxInputTokens.
+    // 1. Prepare request using RequestBuilder
     const activeModel = this.modelManager.getAvailableModels().find(m => m.id === model.id);
-    const effectiveLimit = activeModel?.loadedContextLength ?? model.maxInputTokens ?? 4096;
-    const tokenBudget = Math.floor(effectiveLimit * 0.75);
-    
-    let estimatedTotal = chatMessages.reduce((sum, m) => sum + Math.ceil((m.content?.length ?? 0) / 4), 0);
-    while (chatMessages.length > 1 && estimatedTotal > tokenBudget) {
-      const removed = chatMessages.shift()!;
-      estimatedTotal -= Math.ceil((removed.content?.length ?? 0) / 4);
-      this.logger.debug(`Path A: dropped oldest message to fit token budget (≈${estimatedTotal}/${tokenBudget} tokens remaining)`);
-    }
-    this.logger.debug(`Path A: sending ${chatMessages.length} messages, ≈${estimatedTotal} tokens (budget: ${tokenBudget})`);
+    const { 
+      chatMessages, 
+      tools, 
+      totalCharsSent, 
+      effectiveLimit 
+    } = this.requestBuilder.buildRequest(messages, options, model, activeModel);
 
-
-
-    // Convert VS Code tool definitions to LM Studio format
-    const tools: ToolDefinition[] = (options.tools ?? []).map(t => ({
-      type: 'function',
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.inputSchema
-      }
-    }));
-    if (tools.length > 0) {
-      this.logger.debug(`Forwarding ${tools.length} tools to LM Studio: ${tools.map(t => t.function.name).join(', ')}`);
-    }
-
-    // Run both paths concurrently
+    // 2. Execute streaming completion request
     const streamingPath = (async () => {
       if (chatMessages.length === 0) {
         this.logger.warn(`Path A: no converted messages to send`);
@@ -292,6 +182,11 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
       for await (const part of this.chatClient.streamCompletion(model.id, chatMessages, tools.length > 0 ? tools : undefined)) {
         if (token.isCancellationRequested) { break; }
 
+        if (part.kind === 'usage') {
+          this.tokenizer.recordObservation(model.id, totalCharsSent, part.promptTokens);
+          continue;
+        }
+
         if (part.kind !== 'text') {
           // Native structured tool call delta — emit directly
           let inputObj: object;
@@ -358,9 +253,13 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error(`Streaming path threw: ${errorMessage}`);
-      // Detect context overflow specifically
-      if (errorMessage.includes('n_keep') || errorMessage.includes('n_ctx') || errorMessage.includes('context')) {
-        progress.report(new vscode.LanguageModelTextPart(`[Context overflow: the conversation is too long for this model's context window (${maxInputTokens} tokens). Try starting a new chat.]`));
+      
+      if (isContextOverflowError(error)) {
+        progress.report(new vscode.LanguageModelTextPart(`[Context overflow: the conversation is too long for this model's context window (${effectiveLimit} tokens). Try starting a new chat.]`));
+      } else if (isTimeoutError(error)) {
+        progress.report(new vscode.LanguageModelTextPart(`\n\n[LM Studio error: Request timed out. The model might be too slow for this task or LM Studio is unresponsive.]`));
+      } else if (isConnectionError(error)) {
+        progress.report(new vscode.LanguageModelTextPart(`\n\n[LM Studio error: Could not connect to LM Studio. Ensure the server is running at ${vscode.workspace.getConfiguration('lmStudioCopilot').get('serverHost')}:${vscode.workspace.getConfiguration('lmStudioCopilot').get('serverPort')}.]`));
       } else {
         progress.report(new vscode.LanguageModelTextPart(`\n\n[LM Studio error: ${errorMessage}]`));
       }
@@ -372,8 +271,7 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
     // If streaming produced nothing, surface an error to the user
     if (streamCount === 0 && !token.isCancellationRequested) {
       this.logger.warn(`Path A yielded nothing; reporting no response.`);
-      const reason = conversionError ? `conversion error: ${conversionError}` : "model generated no content";
-      progress.report(new vscode.LanguageModelTextPart(`[No response from LM Studio — ${reason}]`));
+      progress.report(new vscode.LanguageModelTextPart(`[No response from LM Studio — model generated no content]`));
     }
   }
 
@@ -401,8 +299,10 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
         .join('');
     }
 
-    // Rough estimate: ~4 characters per token (typical for most models)
-    const estimatedTokens = Math.ceil(content.length / 4);
+    // Use model-aware tokenizer for more accurate count
+    const activeModel = this.modelManager.getAvailableModels().find(m => m.id === model.id);
+    const family = this.tokenizer.detectFamily(model.id, activeModel?.architecture);
+    const estimatedTokens = this.tokenizer.estimateTokens(content, model.id, family);
 
     this.logger.trace(`Token count estimate for model ${model.id}: ${estimatedTokens}`);
 
