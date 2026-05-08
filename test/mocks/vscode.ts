@@ -3,8 +3,8 @@
  */
 
 export const LanguageModelChatMessageRole = {
-  User: 'user',
-  Assistant: 'assistant'
+  User: 1,
+  Assistant: 2
 };
 
 export class LanguageModelTextPart {
@@ -100,6 +100,29 @@ export const CancellationToken = class {
   onCancellationRequested: any;
 };
 
+export class MockMemento {
+  private storage = new Map<string, any>();
+
+  get<T>(key: string): T | undefined;
+  get<T>(key: string, defaultValue: T): T;
+  get<T>(key: string, defaultValue?: T): T | undefined {
+    return this.storage.has(key) ? this.storage.get(key) : defaultValue;
+  }
+
+  update(key: string, value: any): Promise<void> {
+    if (value === undefined) {
+      this.storage.delete(key);
+    } else {
+      this.storage.set(key, value);
+    }
+    return Promise.resolve();
+  }
+
+  keys(): readonly string[] {
+    return Array.from(this.storage.keys());
+  }
+}
+
 export const ThemeColor = class {
   constructor(public colorName: string) {}
 };
@@ -127,6 +150,7 @@ export default {
   lm,
   EventEmitter,
   CancellationToken,
+  MockMemento,
   ThemeColor,
   LogOutputChannel
 };

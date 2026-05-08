@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConnectionError, TimeoutError, ContextOverflowError, APIError, ParseError } from './errors';
+import { ConnectionError, TimeoutError, ContextOverflowError, APIError } from './errors';
 
 /**
  * Chat message for LM Studio API.
@@ -96,6 +96,7 @@ export class ChatClient {
   private port: number = 1234;
   private requestTimeout: number = 0; // 0 = no timeout
   private showReasoningContent: boolean = true;
+  private temperature: number = ChatClient.DEFAULT_TEMPERATURE;
 
   constructor(logger: vscode.LogOutputChannel) {
     this.logger = logger;
@@ -108,7 +109,8 @@ export class ChatClient {
   private loadConfiguration(): void {
     const config = vscode.workspace.getConfiguration('lmStudioCopilot');
     this.showReasoningContent = config.get<boolean>('showReasoningContent', true);
-    this.logger.trace(`ChatClient showReasoningContent: ${this.showReasoningContent}`);
+    this.temperature = config.get<number>('temperature', ChatClient.DEFAULT_TEMPERATURE);
+    this.logger.trace(`ChatClient showReasoningContent: ${this.showReasoningContent}, temperature: ${this.temperature}`);
   }
 
   /**
@@ -117,7 +119,8 @@ export class ChatClient {
   public updateConfiguration(): void {
     const config = vscode.workspace.getConfiguration('lmStudioCopilot');
     this.showReasoningContent = config.get<boolean>('showReasoningContent', true);
-    this.logger.trace(`ChatClient showReasoningContent updated: ${this.showReasoningContent}`);
+    this.temperature = config.get<number>('temperature', ChatClient.DEFAULT_TEMPERATURE);
+    this.logger.trace(`ChatClient showReasoningContent updated: ${this.showReasoningContent}, temperature updated: ${this.temperature}`);
   }
 
   /**
@@ -150,22 +153,28 @@ export class ChatClient {
    * 
    * @param modelId The ID of the model to use for completion
    * @param messages Array of chat messages (user, assistant, system)
+   * @param tools Optional array of tools for function calling
+   * @param temperature Optional temperature override
    */
   public async* streamCompletion(
     modelId: string,
     messages: ChatMessage[],
-    tools?: ToolDefinition[]
+    tools?: ToolDefinition[],
+    temperature?: number
   ): AsyncGenerator<StreamPart> {
     this.logger.debug(`Streaming completion request for model ${modelId}`);
     
     // Reload configuration at start of each request
     this.loadConfiguration();
 
+    const effectiveTemperature = temperature ?? this.temperature;
+    this.logger.debug(`Effective temperature for request: ${effectiveTemperature}`);
+
     const request: ChatCompletionRequest = {
       model: modelId,
       messages,
       stream: true,
-      temperature: ChatClient.DEFAULT_TEMPERATURE,
+      temperature: effectiveTemperature,
       max_tokens: -1, // Use model default
       ...(tools && tools.length > 0 ? { tools } : {})
     };
@@ -315,6 +324,9 @@ export class ChatClient {
               }
             }
           } catch (jsonError) {
+            if (jsonError instanceof ContextOverflowError || jsonError instanceof APIError) {
+              throw jsonError;
+            }
             this.logger.warn(`Failed to parse SSE chunk (${jsonError}): ${rawData.slice(0, 200)}`);
             continue;
           }
@@ -350,22 +362,27 @@ export class ChatClient {
    */
   public async completion(
     modelId: string,
-    messages: ChatMessage[]
+    messages: ChatMessage[],
+    temperature?: number
   ): Promise<{ content: string; usage?: { promptTokens: number; completionTokens: number; totalTokens: number } }> {
     this.logger.debug(`Non-streaming completion request for model ${modelId}`);
+
+    // Reload configuration at start of each request
+    this.loadConfiguration();
+
+    const effectiveTemperature = temperature ?? this.temperature;
+    this.logger.debug(`Effective temperature for request: ${effectiveTemperature}`);
 
     const request: ChatCompletionRequest = {
       model: modelId,
       messages,
       stream: false,
-      temperature: ChatClient.DEFAULT_TEMPERATURE,
+      temperature: effectiveTemperature,
       max_tokens: -1
     };
 
     try {
-      const url = `http://${this.host}:${this.port}/v1/chat/completions`;
-
-      const response = await fetch(url, {
+      const response = await fetch(`http://${this.host}:${this.port}/v1/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -376,62 +393,23 @@ export class ChatClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        if (errorText.includes('Context size has been exceeded')) {
-          throw new ContextOverflowError(errorText);
-        }
-        throw new APIError(`HTTP status ${response.status}: ${errorText}`, response.status);
+        throw new APIError(`HTTP ${response.status}: ${errorText}`, response.status);
       }
 
       const result = await response.json() as ChatCompletionResponse;
-      
-      if (result.choices && result.choices.length > 0) {
-        return {
-          content: result.choices[0].message.content,
-          usage: result.usage ? {
-            promptTokens: result.usage.prompt_tokens,
-            completionTokens: result.usage.completion_tokens,
-            totalTokens: result.usage.total_tokens
-          } : undefined
-        };
-      }
-
-      throw new ParseError('No choices in chat completion response');
-
+      return {
+        content: result.choices[0].message.content,
+        usage: result.usage ? {
+          promptTokens: result.usage.prompt_tokens,
+          completionTokens: result.usage.completion_tokens,
+          totalTokens: result.usage.total_tokens
+        } : undefined
+      };
     } catch (error: any) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      
-      if (error instanceof ContextOverflowError || error instanceof APIError || error instanceof ParseError) {
+      if (error instanceof APIError) {
         throw error;
       }
-
-      this.logger.error(`Chat completion failed: ${errorMessage}`);
-      
-      if (error.name === 'AbortError' || errorMessage.includes('terminated') || errorMessage.includes('timed out')) {
-        throw new TimeoutError(this.requestTimeout);
-      }
-
-      if (errorMessage.includes('fetch failed') || errorMessage.includes('ECONNREFUSED')) {
-        throw new ConnectionError(errorMessage, error);
-      }
-
-      throw new APIError(errorMessage, 500);
+      throw new APIError(`LM Studio chat error: ${error.message}`, 500);
     }
-  }
-
-  /**
-   * Build a prompt from the current document context for inline suggestions.
-   */
-  public buildInlinePrompt(documentText: string, cursorPosition: number): string {
-    const lines = documentText.split('\n');
-    
-    // Get current line and up to 3 preceding lines as context
-    let contextStart = Math.max(0, cursorPosition - 150);
-    const contextEnd = cursorPosition;
-
-    const contextLines = lines.slice(contextStart, cursorPosition + 1);
-    const currentLine = contextLines[contextLines.length - 1] || '';
-
-    // Build prompt with context
-    return `Current line: ${currentLine}\nPrevious lines:\n${contextLines.slice(0, -1).reverse().join('\n')}`;
   }
 }

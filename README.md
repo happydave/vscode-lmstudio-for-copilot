@@ -39,6 +39,11 @@ The extension connects to LM Studio's local API server (default: `http://localho
 - To disable this, set `lmStudioCopilot.enableContextPrioritization` to `false` or use the **"LM Studio: Toggle Context Prioritization"** command.
 - To change the total amount of context allowed, adjust `lmStudioCopilot.contextTokenBudget` (default 20,000 tokens).
 
+**Configuring Temperature**
+- Global default temperature can be set via `lmStudioCopilot.temperature` (default `0.7`).
+- Per-model overrides can be set via `lmStudioCopilot.modelTemperatures` using an object mapping model IDs to temperature values (e.g., `{ "qwen2.5-7b-instruct": 0.1 }`).
+- Per-model overrides take precedence over the global default.
+
 **See "Refresh ignored" message when clicking refresh button**
 - This is expected behavior - the extension throttles rapid refresh attempts to prevent API overload
 - Default cooldown is 5 seconds between manual refreshes. Wait for the indicated time and try again

@@ -2,7 +2,7 @@
   "name": "lmstudio-for-copilot",
   "displayName": "LM Studio Copilot",
   "description": "VS Code extension providing inline code completion powered by LM Studio models with automatic discovery",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "publisher": "lmstudio",
   "repository": {
     "type": "git",
@@ -147,6 +147,29 @@
           "type": "number",
           "default": 20000,
           "description": "Maximum number of tokens to spend on injected workspace context per request."
+        },
+        "lmStudioCopilot.temperature": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Global default temperature for LM Studio requests"
+        },
+        "lmStudioCopilot.modelTemperatures": {
+          "type": "object",
+          "default": {},
+          "description": "Per-model temperature overrides. Keys are model IDs, values are numbers (0.0-2.0)."
+        },
+        "lmStudioCopilot.loopDetection.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable detection of repetitive tool-call loops to prevent runaway token usage."
+        },
+        "lmStudioCopilot.loopDetection.consecutiveCallThreshold": {
+          "type": "number",
+          "default": 3,
+          "minimum": 2,
+          "description": "Number of consecutive identical tool calls required to trigger loop detection and halt execution."
         }
       }
     },

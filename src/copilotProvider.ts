@@ -105,9 +105,10 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken
   ): Promise<void> {
-    this.logger.debug(`provideLanguageModelChatResponse: model=${model.id}, messages=${messages.length}, tools=${options.tools?.length ?? 0}`);
+    try {
+      this.logger.debug(`provideLanguageModelChatResponse: model=${model.id}, messages=${messages.length}, tools=${options.tools?.length ?? 0}`);
 
-    // 1. Gather workspace context (async, non-blocking — empty string if disabled or unavailable)
+      // 1. Gather workspace context (async, non-blocking — empty string if disabled or unavailable)
     const activeFilePath = vscode.window.activeTextEditor?.document.uri.fsPath;
     const workspaceContext = await this.contextManager.buildContext(activeFilePath, model.id);
 
@@ -119,6 +120,11 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
       totalCharsSent, 
       effectiveLimit 
     } = this.requestBuilder.buildRequest(messages, options, model, activeModel, workspaceContext);
+
+    // Resolve temperature override for this model
+    const config = vscode.workspace.getConfiguration('lmStudioCopilot');
+    const modelTemperatures = config.get<Record<string, number>>('modelTemperatures', {});
+    const temperatureOverride = modelTemperatures[model.id];
 
     // 2. Execute streaming completion request
     const streamingPath = (async () => {
@@ -136,6 +142,30 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
       let toolCallSeq = 0;
       const OPEN_TAG = '<tool_call>';
       const CLOSE_TAG = '</tool_call>';
+
+      // Loop detection state
+      let consecutiveCallCount = 0;
+      let lastToolCallFingerprint = '';
+      let loopDetected = false;
+      const loopDetectionEnabled = config.get<boolean>('loopDetection.enabled', true);
+      const loopThreshold = config.get<number>('loopDetection.consecutiveCallThreshold', 3);
+
+      const checkLoop = (name: string, input: object): boolean => {
+        if (!loopDetectionEnabled) { return false; }
+        const fingerprint = `${name}:${JSON.stringify(input)}`;
+        if (fingerprint === lastToolCallFingerprint) {
+          consecutiveCallCount++;
+          if (consecutiveCallCount >= loopThreshold) {
+            this.logger.warn(`Loop detected: ${name} called ${consecutiveCallCount} times with identical arguments.`);
+            progress.report(new vscode.LanguageModelTextPart(`\n\n[Loop detected: '${name}' was called ${consecutiveCallCount} times with identical arguments. Stopping to prevent runaway execution. Please rephrase your request or reduce the task scope.]`));
+            return true;
+          }
+        } else {
+          lastToolCallFingerprint = fingerprint;
+          consecutiveCallCount = 1;
+        }
+        return false;
+      };
 
       const flushTextBuffer = (buf: string) => {
         if (buf) {
@@ -182,6 +212,10 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
       const emitToolCall = (raw: string) => {
         const result = parseToolCallBody(raw);
         if (result) {
+          if (checkLoop(result.name, result.input)) {
+            loopDetected = true;
+            return;
+          }
           const callId = `xml-tool-${++toolCallSeq}`;
           this.logger.debug(`Parsed XML tool call: name=${result.name} callId=${callId} input=${JSON.stringify(result.input).slice(0, 200)}`);
           count++;
@@ -193,8 +227,13 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
         }
       };
 
-      for await (const part of this.chatClient.streamCompletion(model.id, chatMessages, tools.length > 0 ? tools : undefined)) {
-        if (token.isCancellationRequested) { break; }
+      for await (const part of this.chatClient.streamCompletion(
+        model.id, 
+        chatMessages, 
+        tools.length > 0 ? tools : undefined,
+        temperatureOverride
+      )) {
+        if (token.isCancellationRequested || loopDetected) { break; }
 
         if (part.kind === 'usage') {
           this.tokenizer.recordObservation(model.id, totalCharsSent, part.promptTokens);
@@ -206,6 +245,12 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
           let inputObj: object;
           try { inputObj = JSON.parse(part.arguments) as object; }
           catch { inputObj = {}; }
+          
+          if (checkLoop(part.name, inputObj)) {
+            loopDetected = true;
+            break;
+          }
+
           count++;
           progress.report(new vscode.LanguageModelToolCallPart(part.id, part.name, inputObj));
           continue;
@@ -215,6 +260,7 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
 
         // Process buffer, scanning for <tool_call> / </tool_call> tags
         while (true) {
+          if (loopDetected) { break; }
           if (!inToolCall) {
             const start = textBuffer.indexOf(OPEN_TAG);
             if (start === -1) {
@@ -286,6 +332,10 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
     if (streamCount === 0 && !token.isCancellationRequested) {
       this.logger.warn(`Path A yielded nothing; reporting no response.`);
       progress.report(new vscode.LanguageModelTextPart(`[No response from LM Studio — model generated no content]`));
+    }
+    } catch (error) {
+      this.logger.error(`Error in provideLanguageModelChatResponse: ${error}`);
+      progress.report(new vscode.LanguageModelTextPart(`[Error]: ${error instanceof Error ? error.message : String(error)}`));
     }
   }
 

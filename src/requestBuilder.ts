@@ -48,7 +48,7 @@ export class RequestBuilder {
     let chatMessages = this.convertMessages(messages, systemPrompt);
 
     // 3. Resolve budget parameters
-    const totalLimit = activeModel?.loadedContextLength ?? (model.maxInputTokens + model.maxOutputTokens);
+    const totalLimit = activeModel?.loadedContextLength ?? (model.maxInputTokens + (model.maxOutputTokens ?? 0));
     const outputReservation = Math.min(32768, Math.floor(totalLimit / 4));
     const effectiveLimit = totalLimit - outputReservation;
     const modelFamily = this.tokenizer.detectFamily(model.id, activeModel?.architecture);

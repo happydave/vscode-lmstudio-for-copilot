@@ -260,9 +260,14 @@ async function handleInlineCompletion(
 
     let completionText = '';
     
+    const modelTemperatures = config.get<Record<string, number>>('modelTemperatures', {});
+    const temperatureOverride = modelTemperatures[activeModelId];
+
     try {
-      for await (const chunk of chatClient.streamCompletion(activeModelId, messages)) {
-        completionText += chunk;
+      for await (const part of chatClient.streamCompletion(activeModelId, messages, undefined, temperatureOverride)) {
+        if (part.kind === 'text') {
+          completionText += part.content;
+        }
         
         // Stop at reasonable length or newlines
         if (completionText.length > 200 || completionText.includes('\n\n')) {
