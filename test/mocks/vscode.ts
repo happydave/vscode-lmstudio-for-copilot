@@ -19,6 +19,13 @@ export class LanguageModelToolCallPart {
   ) {}
 }
 
+export class LanguageModelToolResultPart {
+  constructor(
+    public callId: string,
+    public content: Array<LanguageModelTextPart | unknown>
+  ) {}
+}
+
 export class LanguageModelDataPart {
   static image(data: Uint8Array, mime: string) {
     return new LanguageModelDataPart(data, mime);
@@ -59,7 +66,8 @@ export const window = {
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }))
+  })),
+  activeTextEditor: undefined as any,
 };
 
 export const workspace = {
@@ -69,7 +77,9 @@ export const workspace = {
       return defaultValue ?? false;
     })
   })),
-  onDidChangeConfiguration: jest.fn(() => ({ dispose: jest.fn() }))
+  onDidChangeConfiguration: jest.fn(() => ({ dispose: jest.fn() })),
+  findFiles: jest.fn().mockResolvedValue([]),
+  workspaceFolders: undefined as any,
 };
 
 export const languages = {
@@ -140,6 +150,7 @@ export default {
   LanguageModelChatMessageRole,
   LanguageModelTextPart,
   LanguageModelToolCallPart,
+  LanguageModelToolResultPart,
   LanguageModelDataPart,
   StatusBarAlignment,
   StatusBarItem,

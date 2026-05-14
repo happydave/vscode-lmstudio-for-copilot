@@ -108,9 +108,8 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
     try {
       this.logger.debug(`provideLanguageModelChatResponse: model=${model.id}, messages=${messages.length}, tools=${options.tools?.length ?? 0}`);
 
-      // 1. Gather workspace context (async, non-blocking — empty string if disabled or unavailable)
-    const activeFilePath = vscode.window.activeTextEditor?.document.uri.fsPath;
-    const workspaceContext = await this.contextManager.buildContext(activeFilePath, model.id);
+      // 1. Gather context from active editor (if not already in messages)
+    const workspaceContext = await this.contextManager.buildContext(messages, model.id);
 
     // 2. Prepare request using RequestBuilder
     const activeModel = this.modelManager.getAvailableModels().find(m => m.id === model.id);

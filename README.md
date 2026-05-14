@@ -22,7 +22,8 @@ The extension connects to LM Studio's local API server (default: `http://localho
 
 - **Automatic Discovery**: Detects LM Studio at startup and monitors for availability
 - **Model Auto-Selection**: Uses whichever model is currently loaded in LM Studio's UI
-- **Workspace Context Prioritization**: Automatically includes the most relevant workspace files in the prompt context based on recency, proximity, and relevance heuristics.
+- **Conversation-Driven Context**: Automatically includes the currently active editor file in the chat context when it is not already referenced in the conversation. Files the user has not explicitly opened or attached are never injected.
+- **Smart Context Scanner** *(opt-in)*: Discovers files that are already referenced in the conversation — via attached files, tool calls, or tool results — and injects those files into the context. Only files explicitly grounded in the conversation are considered; the workspace index is never scanned.
 - **Real-time Streaming**: Responses stream live as tokens are generated
 
 - Use `0` (default) to disable timeout entirely
@@ -35,9 +36,11 @@ The extension connects to LM Studio's local API server (default: `http://localho
 - Try Command Palette → "LM Studio: Refresh Models"
 
 **Adjusting Context Injection**
-- By default, the extension automatically injects relevant workspace files into the chat context.
-- To disable this, set `lmStudioCopilot.enableContextPrioritization` to `false` or use the **"LM Studio: Toggle Context Prioritization"** command.
-- To change the total amount of context allowed, adjust `lmStudioCopilot.contextTokenBudget` (default 20,000 tokens).
+- By default, the extension injects the currently active editor file into the chat context when it is not already present in the conversation.
+- To disable this entirely, set `lmStudioCopilot.enableContextPrioritization` to `false` or use the **"LM Studio: Toggle Context Prioritization"** command.
+- To change the maximum tokens allowed for injected context, adjust `lmStudioCopilot.contextTokenBudget` (default 20,000 tokens).
+- To enable the smart context scanner, set `lmStudioCopilot.enableSmartContextScanner` to `true`. The scanner discovers files from the conversation itself — files attached via `#file:`, paths extracted from tool call inputs, and paths found in tool result text — scores them by recency and frequency of reference, and injects the highest-scoring files that are not already present in the conversation. Requires `enableContextPrioritization` to be `true`.
+- Tune scanner behavior with `lmStudioCopilot.smartContextScanner.maxFilesToScan` (default 50, max candidates that advance to the file-read stage after scoring) and `lmStudioCopilot.smartContextScanner.maxResultFiles` (default 5, max files injected per request).
 
 **Configuring Temperature**
 - Global default temperature can be set via `lmStudioCopilot.temperature` (default `0.7`).

@@ -2,7 +2,7 @@
   "name": "lmstudio-for-copilot",
   "displayName": "LM Studio Copilot",
   "description": "VS Code extension providing inline code completion powered by LM Studio models with automatic discovery",
-  "version": "0.1.10",
+  "version": "0.1.14",
   "publisher": "lmstudio",
   "repository": {
     "type": "git",
@@ -141,12 +141,29 @@
         "lmStudioCopilot.enableContextPrioritization": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically include relevant workspace files in the prompt context sent to LM Studio. Disable to turn off context injection entirely."
+          "description": "Inject the currently active editor file into the chat context when it is not already referenced in the conversation. Disable to turn off context injection entirely."
         },
         "lmStudioCopilot.contextTokenBudget": {
           "type": "number",
           "default": 20000,
-          "description": "Maximum number of tokens to spend on injected workspace context per request."
+          "description": "Maximum number of tokens allowed for all injected context (active editor + smart scanner) per request."
+        },
+        "lmStudioCopilot.enableSmartContextScanner": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, discovers files already referenced in the conversation (via attached files, tool call inputs, or tool result text) and injects them into context. Only conversation-grounded files are considered; the workspace index is never scanned. Requires enableContextPrioritization to be true."
+        },
+        "lmStudioCopilot.smartContextScanner.maxFilesToScan": {
+          "type": "number",
+          "default": 50,
+          "minimum": 0,
+          "description": "Maximum number of conversation-referenced file candidates that advance to the file-read stage after scoring. Candidates ranked beyond this cap are dropped without any filesystem access."
+        },
+        "lmStudioCopilot.smartContextScanner.maxResultFiles": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "description": "Maximum number of workspace files the smart context scanner may inject into context per request."
         },
         "lmStudioCopilot.temperature": {
           "type": "number",

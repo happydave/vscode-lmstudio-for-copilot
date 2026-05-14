@@ -30,7 +30,7 @@ function makeTokenizer(logger: any): Tokenizer {
   return t;
 }
 
-function mockWorkspace(enabled = true, budget = 20000, rootPath = '/workspace'): void {
+function mockConfig(enabled = true, budget = 20000): void {
   (vscode.workspace.getConfiguration as jest.Mock).mockReturnValue({
     get: jest.fn((key: string, def?: any) => {
       if (key === 'enableContextPrioritization') return enabled;
@@ -38,22 +38,45 @@ function mockWorkspace(enabled = true, budget = 20000, rootPath = '/workspace'):
       return def;
     }),
   });
+}
+
+function mockWorkspaceRoot(rootPath = '/workspace'): void {
   (vscode.workspace as any).workspaceFolders = [{ uri: { fsPath: rootPath } }];
 }
 
-// Helper to create a stat result
-function fakeStat(size: number, mtimeMs = Date.now() - 7_200_000 /* 2h ago */): any {
-  return { size, mtimeMs, isFile: () => true, isDirectory: () => false };
-}
-
-// Helper to create a dirent-like object
-function dirent(name: string, isDir: boolean): any {
-  return {
-    name,
-    isDirectory: () => isDir,
-    isFile: () => !isDir,
+function mockActiveEditor(fsPath: string, scheme = 'file'): void {
+  (vscode.window as any).activeTextEditor = {
+    document: { uri: { fsPath, scheme } },
   };
 }
+
+function clearActiveEditor(): void {
+  (vscode.window as any).activeTextEditor = undefined;
+}
+
+/** Build a minimal vscode.LanguageModelChatRequestMessage with text content */
+function userMsg(text: string): vscode.LanguageModelChatRequestMessage {
+  return {
+    role: vscode.LanguageModelChatMessageRole.User,
+    content: [new vscode.LanguageModelTextPart(text)],
+  } as any;
+}
+
+function assistantMsg(text: string): vscode.LanguageModelChatRequestMessage {
+  return {
+    role: vscode.LanguageModelChatMessageRole.Assistant,
+    content: [new vscode.LanguageModelTextPart(text)],
+  } as any;
+}
+
+function assistantToolCallMsg(filePath: string): vscode.LanguageModelChatRequestMessage {
+  return {
+    role: vscode.LanguageModelChatMessageRole.Assistant,
+    content: [new vscode.LanguageModelToolCallPart('c1', 'read_file', { path: filePath })],
+  } as any;
+}
+
+const NO_MESSAGES: readonly vscode.LanguageModelChatRequestMessage[] = [];
 
 // --- Tests ---
 
@@ -68,184 +91,317 @@ describe('ContextManager', () => {
     tokenizer = makeTokenizer(logger);
     manager = new ContextManager(logger, tokenizer);
 
-    // Default: active workspace with no active file
-    mockWorkspace(true, 20000, '/workspace');
+    mockConfig(true, 20000);
+    mockWorkspaceRoot('/workspace');
+    clearActiveEditor();
   });
 
-  describe('buildContext — disabled', () => {
-    it('returns empty string when enableContextPrioritization is false', async () => {
-      mockWorkspace(false);
-      const result = await manager.buildContext();
+  // ---------- master switch ----------
+
+  describe('disabled', () => {
+    it('returns empty string immediately and does not read any files', async () => {
+      mockConfig(false);
+      mockActiveEditor('/workspace/src/foo.ts');
+      const result = await manager.buildContext(NO_MESSAGES);
       expect(result).toBe('');
+      expect(fs.readFile).not.toHaveBeenCalled();
       expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining('Disabled'));
     });
   });
 
-  describe('buildContext — empty workspace', () => {
-    it('returns empty string when no workspace folders are open', async () => {
-      (vscode.workspace as any).workspaceFolders = [];
-      const result = await manager.buildContext();
+  // ---------- active editor guards ----------
+
+  describe('no active editor', () => {
+    it('returns empty string when no editor is open', async () => {
+      const result = await manager.buildContext(NO_MESSAGES);
+      expect(result).toBe('');
+      expect(fs.readFile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('non-file editor', () => {
+    it('returns empty string for untitled / virtual scheme', async () => {
+      mockActiveEditor('/workspace/untitled', 'untitled');
+      const result = await manager.buildContext(NO_MESSAGES);
+      expect(result).toBe('');
+      expect(fs.readFile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('binary file extension', () => {
+    it.each(['.png', '.jpg', '.svg', '.pdf', '.zip', '.mp3', '.log', '.map'])(
+      'returns empty string for %s',
+      async (ext) => {
+        mockActiveEditor(`/workspace/src/asset${ext}`);
+        const result = await manager.buildContext(NO_MESSAGES);
+        expect(result).toBe('');
+        expect(fs.readFile).not.toHaveBeenCalled();
+      }
+    );
+  });
+
+  // ---------- path detection in messages ----------
+
+  describe('already in messages', () => {
+    it('returns empty string when full path appears in a user message', async () => {
+      mockActiveEditor('/workspace/src/foo.ts');
+      const messages = [userMsg('Here is /workspace/src/foo.ts:\n```\nconst x = 1;\n```')];
+      const result = await manager.buildContext(messages);
+      expect(result).toBe('');
+      expect(fs.readFile).not.toHaveBeenCalled();
+    });
+
+    it('returns empty string when basename appears in a user message', async () => {
+      mockActiveEditor('/workspace/src/bar.ts');
+      const messages = [userMsg('The file bar.ts has a bug on line 10.')];
+      const result = await manager.buildContext(messages);
       expect(result).toBe('');
     });
-  });
 
-  describe('buildContext — file exclusions', () => {
-    it('excludes node_modules directory', async () => {
-      fs.readdir.mockImplementation(async (dir) => {
-        if (String(dir) === '/workspace') {
-          return [dirent('node_modules', true), dirent('src', true)];
-        }
-        if (String(dir) === '/workspace/src') {
-          return [dirent('index.ts', false)];
-        }
-        return [];
-      });
-      fs.stat.mockResolvedValue(fakeStat(100));
-      fs.readFile.mockResolvedValue('const x = 1;');
-
-      const result = await manager.buildContext();
-      expect(result).toContain('src/index.ts');
-      expect(result).not.toContain('node_modules');
-    });
-
-    it('excludes .git directory', async () => {
-      fs.readdir.mockImplementation(async (dir) => {
-        if (String(dir) === '/workspace') {
-          return [dirent('.git', true), dirent('main.ts', false)];
-        }
-        return [];
-      });
-      fs.stat.mockResolvedValue(fakeStat(100));
-      fs.readFile.mockResolvedValue('export {}');
-
-      const result = await manager.buildContext();
-      expect(result).not.toContain('.git');
-    });
-
-    it('excludes files larger than 100KB', async () => {
-      fs.readdir.mockResolvedValue([dirent('big.ts', false)] as any);
-      fs.stat.mockResolvedValue(fakeStat(200_000)); // 200KB
-
-      const result = await manager.buildContext();
+    it('returns empty string when path appears in an assistant message', async () => {
+      mockActiveEditor('/workspace/src/baz.ts');
+      const messages = [assistantMsg('Looking at baz.ts, I see the issue...')];
+      const result = await manager.buildContext(messages);
       expect(result).toBe('');
     });
 
-    it('excludes binary extensions', async () => {
-      fs.readdir.mockResolvedValue([dirent('image.png', false), dirent('app.ts', false)] as any);
-      fs.stat.mockImplementation(async (p) => {
-        return fakeStat(100);
-      });
-      fs.readFile.mockResolvedValue('const app = true;');
+    it('injects when messages mention a different file with a similar name', async () => {
+      mockActiveEditor('/workspace/src/contextManager.ts');
+      // Only references a different file
+      const messages = [userMsg('Please look at requestBuilder.ts')];
+      fs.stat.mockResolvedValue({ size: 100 } as any);
+      fs.readFile.mockResolvedValue('export class ContextManager {}');
 
-      const result = await manager.buildContext();
-      expect(result).not.toContain('image.png');
-      expect(result).toContain('app.ts');
+      const result = await manager.buildContext(messages);
+      expect(result).toContain('contextManager.ts');
     });
   });
 
-  describe('scoring', () => {
-    it('ranks a recently modified same-directory file higher than an old distant file', async () => {
-      const recentlyModified = Date.now() - 60_000; // 1 minute ago
-      const oldMs = Date.now() - 90_000_000;        // ~25 hours ago
+  // ---------- successful injection ----------
 
-      fs.readdir.mockImplementation(async (dir) => {
-        if (String(dir) === '/workspace') return [dirent('src', true), dirent('lib', true)];
-        if (String(dir) === '/workspace/src') return [dirent('active.ts', false), dirent('nearby.ts', false)];
-        if (String(dir) === '/workspace/lib') return [dirent('old.ts', false)];
-        return [];
-      });
+  describe('active file injection', () => {
+    it('returns a context block containing the active file content', async () => {
+      mockActiveEditor('/workspace/src/utils.ts');
+      fs.stat.mockResolvedValue({ size: 200 } as any);
+      fs.readFile.mockResolvedValue('export function add(a: number, b: number) { return a + b; }');
 
-      fs.stat.mockImplementation(async (p) => {
-        if (String(p).endsWith('nearby.ts')) return { size: 40, mtimeMs: recentlyModified, isFile: () => true };
-        if (String(p).endsWith('old.ts')) return { size: 40, mtimeMs: oldMs, isFile: () => true };
-        if (String(p).endsWith('active.ts')) return { size: 20, mtimeMs: oldMs, isFile: () => true };
-        return fakeStat(40);
-      });
+      const result = await manager.buildContext(NO_MESSAGES);
+      expect(result).toContain('src/utils.ts');
+      expect(result).toContain('export function add');
+      expect(result).toMatch(/\[Workspace Context — 1 file, ~\d+ tokens\]/);
+    });
 
+    it('uses a relative path from the workspace root', async () => {
+      mockWorkspaceRoot('/home/user/project');
+      mockActiveEditor('/home/user/project/src/main.ts');
+      fs.stat.mockResolvedValue({ size: 50 } as any);
       fs.readFile.mockResolvedValue('const x = 1;');
 
-      // Active file is in /workspace/src
-      const result = await manager.buildContext('/workspace/src/active.ts');
+      const result = await manager.buildContext(NO_MESSAGES);
+      expect(result).toContain('src/main.ts');
+      expect(result).not.toContain('/home/user/project/src/main.ts');
+    });
 
-      // nearby.ts (same dir + recent) must appear before old.ts (different dir + old)
-      const nearbyIdx = result.indexOf('src/nearby.ts');
-      const oldIdx = result.indexOf('lib/old.ts');
-      expect(nearbyIdx).toBeGreaterThan(-1);
-      expect(oldIdx).toBeGreaterThan(-1);
-      expect(nearbyIdx).toBeLessThan(oldIdx);
+    it('uses basename when no workspace folder is available', async () => {
+      (vscode.workspace as any).workspaceFolders = undefined;
+      mockActiveEditor('/some/path/standalone.ts');
+      fs.stat.mockResolvedValue({ size: 50 } as any);
+      fs.readFile.mockResolvedValue('const y = 2;');
+
+      const result = await manager.buildContext(NO_MESSAGES);
+      expect(result).toContain('standalone.ts');
+    });
+
+    it('includes empty file content without omitting the block', async () => {
+      mockActiveEditor('/workspace/src/empty.ts');
+      fs.stat.mockResolvedValue({ size: 0 } as any);
+      fs.readFile.mockResolvedValue('');
+
+      const result = await manager.buildContext(NO_MESSAGES);
+      expect(result).toContain('empty.ts');
+      expect(result).toContain('```\n\n```');
     });
   });
 
-  describe('budgeting & truncation', () => {
-    it('does not exceed the global token budget', async () => {
-      const budget = 100; // Very tight budget
-      mockWorkspace(true, budget);
+  // ---------- error paths ----------
 
-      // Each file's content is 80 chars → 20 tokens at 4 chars/token
-      fs.readdir.mockResolvedValue([
-        dirent('a.ts', false), dirent('b.ts', false), dirent('c.ts', false),
-        dirent('d.ts', false), dirent('e.ts', false), dirent('f.ts', false),
-      ] as any);
-      fs.stat.mockResolvedValue(fakeStat(80));
-      fs.readFile.mockResolvedValue('x'.repeat(80)); // 20 tokens each
+  describe('file read errors', () => {
+    it('returns empty string when stat fails', async () => {
+      mockActiveEditor('/workspace/src/ghost.ts');
+      fs.stat.mockRejectedValue(new Error('ENOENT'));
 
-      const result = await manager.buildContext();
-
-      // Count packed files: 100 token budget / 20 per file = 5 files max
-      const matches = result.match(/###/g) ?? [];
-      expect(matches.length).toBeLessThanOrEqual(5);
+      const result = await manager.buildContext(NO_MESSAGES);
+      expect(result).toBe('');
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('ghost.ts'));
     });
 
-    it('includes a truncation marker and lists truncated files in header', async () => {
-      const budget = 20000;
-      mockWorkspace(true, budget);
+    it('returns empty string when readFile fails', async () => {
+      mockActiveEditor('/workspace/src/unreadable.ts');
+      fs.stat.mockResolvedValue({ size: 100 } as any);
+      fs.readFile.mockRejectedValue(new Error('EACCES'));
 
-      // File content = 44000 chars → 11000 tokens at 4 chars/token.
-      // Budget is 20000 but 20000 < 11000*2=22000, so truncation to diversity floor applies.
-      // Content has newlines every 100 chars so truncation at newline boundary works.
-      const line = 'y'.repeat(99) + '\n';  // 100 chars per line
-      const largeContent = line.repeat(440); // 44000 chars total, newline at every 100th char
+      const result = await manager.buildContext(NO_MESSAGES);
+      expect(result).toBe('');
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('unreadable.ts'));
+    });
+  });
 
-      fs.readdir.mockResolvedValue([dirent('large.ts', false)] as any);
-      fs.stat.mockResolvedValue(fakeStat(40000));
-      fs.readFile.mockResolvedValue(largeContent);
+  // ---------- size and budget guards ----------
 
-      const result = await manager.buildContext();
+  describe('large file guard', () => {
+    it('returns empty string when file exceeds 500KB', async () => {
+      mockActiveEditor('/workspace/src/huge.ts');
+      fs.stat.mockResolvedValue({ size: 600_000 } as any);
 
-      expect(result).toContain('TRUNCATED');
-      expect(result).toContain('Truncated: large.ts');
+      const result = await manager.buildContext(NO_MESSAGES);
+      expect(result).toBe('');
+      expect(fs.readFile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('token budget', () => {
+    it('returns empty string when contextTokenBudget is 0', async () => {
+      mockConfig(true, 0);
+      mockActiveEditor('/workspace/src/foo.ts');
+      fs.stat.mockResolvedValue({ size: 100 } as any);
+      fs.readFile.mockResolvedValue('const x = 1;');
+
+      const result = await manager.buildContext(NO_MESSAGES);
+      expect(result).toBe('');
     });
 
-    it('includes large file in full when budget permits (2x headroom)', async () => {
-      // File is 3000 tokens, remaining budget starts at 20000 — well above 3000*2=6000
-      const content = 'z'.repeat(12000) + '\n'; // 3000 tokens at 4 chars/token
-      mockWorkspace(true, 20000);
+    it('truncates file content when it exceeds the token budget', async () => {
+      const budget = 50; // tokens
+      mockConfig(true, budget);
+      mockActiveEditor('/workspace/src/long.ts');
 
-      fs.readdir.mockResolvedValue([dirent('moderate.ts', false)] as any);
-      fs.stat.mockResolvedValue(fakeStat(12001));
+      // 400 chars / 4 = 100 tokens, exceeds budget of 50
+      const line = 'x'.repeat(39) + '\n'; // 40 chars per line
+      const content = line.repeat(10);    // 400 chars, 100 tokens
+      fs.stat.mockResolvedValue({ size: 400 } as any);
       fs.readFile.mockResolvedValue(content);
 
-      const result = await manager.buildContext();
+      const result = await manager.buildContext(NO_MESSAGES);
+      expect(result).toContain('TRUNCATED');
+      expect(result).toContain('Truncated: long.ts');
+    });
 
+    it('omits file when no safe truncation point exists', async () => {
+      const budget = 5;
+      mockConfig(true, budget);
+      mockActiveEditor('/workspace/src/nolines.ts');
+
+      // Single line, no newlines → no safe truncation point
+      const content = 'x'.repeat(200); // 50 tokens, no newlines
+      fs.stat.mockResolvedValue({ size: 200 } as any);
+      fs.readFile.mockResolvedValue(content);
+
+      const result = await manager.buildContext(NO_MESSAGES);
+      expect(result).toBe('');
+    });
+
+    it('includes file without truncation when it fits within budget', async () => {
+      mockConfig(true, 1000);
+      mockActiveEditor('/workspace/src/small.ts');
+      const content = 'const small = true;\n'; // 5 tokens
+      fs.stat.mockResolvedValue({ size: 20 } as any);
+      fs.readFile.mockResolvedValue(content);
+
+      const result = await manager.buildContext(NO_MESSAGES);
       expect(result).not.toContain('TRUNCATED');
-      expect(result).toContain('moderate.ts');
+      expect(result).toContain('const small = true;');
     });
   });
 
-  describe('estimateContextSize', () => {
-    it('returns 0 when disabled', async () => {
-      mockWorkspace(false);
-      const size = await manager.estimateContextSize();
-      expect(size).toBe(0);
+  // ---------- smart context scanner ----------
+
+  describe('smart context scanner disabled (default)', () => {
+    it('does not call findFiles when scanner is disabled', async () => {
+      mockActiveEditor('/workspace/src/foo.ts');
+      fs.stat.mockResolvedValue({ size: 100 } as any);
+      fs.readFile.mockResolvedValue('const x = 1;\n');
+
+      await manager.buildContext([userMsg('Please look at contextManager.ts')]);
+      expect(vscode.workspace.findFiles).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('smart context scanner enabled', () => {
+    function mockSmartConfig(budget = 20000): void {
+      (vscode.workspace.getConfiguration as jest.Mock).mockReturnValue({
+        get: jest.fn((key: string, def?: any) => {
+          if (key === 'enableContextPrioritization') return true;
+          if (key === 'contextTokenBudget') return budget;
+          if (key === 'enableSmartContextScanner') return true;
+          if (key === 'smartContextScanner.maxFilesToScan') return 50;
+          if (key === 'smartContextScanner.maxResultFiles') return 5;
+          return def;
+        }),
+      });
+    }
+
+    it('injects a scanner file when conversation references it via tool call', async () => {
+      mockSmartConfig();
+      clearActiveEditor();
+      fs.stat.mockResolvedValue({ size: 100 } as any);
+      fs.readFile.mockResolvedValue('export class RequestBuilder {}\n');
+
+      const result = await manager.buildContext([
+        assistantToolCallMsg('/workspace/src/requestBuilder.ts'),
+      ]);
+      expect(result).toContain('RequestBuilder');
+      expect(result).toMatch(/\[Workspace Context — 1 file/);
     });
 
-    it('returns a positive estimate without reading file contents', async () => {
-      fs.readdir.mockResolvedValue([dirent('types.ts', false)] as any);
-      fs.stat.mockResolvedValue(fakeStat(800)); // 800 bytes ≈ 228 tokens at 3.5 chars/token
+    it('does not inject scanner files when conversation has no signal', async () => {
+      mockSmartConfig();
+      clearActiveEditor();
 
-      const size = await manager.estimateContextSize();
-      expect(size).toBeGreaterThan(0);
-      expect(fs.readFile).not.toHaveBeenCalled();
+      const result = await manager.buildContext([userMsg('Hello, how are you?')]);
+      expect(result).toBe('');
+      expect(vscode.workspace.findFiles).not.toHaveBeenCalled();
+    });
+
+    it('excludes the active editor file from scanner results', async () => {
+      mockSmartConfig();
+      mockActiveEditor('/workspace/src/contextManager.ts');
+      fs.stat.mockResolvedValue({ size: 100 } as any);
+      fs.readFile.mockResolvedValue('export class RequestBuilder { buildContext() {} }\n');
+
+      const result = await manager.buildContext([
+        assistantToolCallMsg('/workspace/src/contextManager.ts'),
+      ]);
+      // contextManager.ts is the active file AND referenced in the tool call.
+      // It should appear exactly once (active editor injection only, not re-injected by scanner).
+      const matches = (result.match(/contextManager\.ts/g) || []).length;
+      expect(matches).toBe(1);
+    });
+
+    it('returns only scanner results when there is no active editor', async () => {
+      mockSmartConfig();
+      clearActiveEditor();
+      fs.stat.mockResolvedValue({ size: 100 } as any);
+      fs.readFile.mockResolvedValue('export class Tokenizer {}\n');
+
+      const result = await manager.buildContext([
+        assistantToolCallMsg('/workspace/src/tokenizer.ts'),
+      ]);
+      expect(result).toContain('tokenizer.ts');
+      expect(result).toMatch(/\[Workspace Context — 1 file/);
+    });
+
+    it('combines active file and scanner results into a single context block', async () => {
+      mockSmartConfig();
+      mockActiveEditor('/workspace/src/main.ts');
+      fs.stat.mockResolvedValue({ size: 100 } as any);
+      fs.readFile.mockResolvedValue('export function helper() {}\n');
+
+      const result = await manager.buildContext([
+        assistantToolCallMsg('/workspace/src/utils.ts'),
+      ]);
+      expect(result).toContain('main.ts');
+      expect(result).toContain('utils.ts');
+      expect(result).toMatch(/\[Workspace Context — 2 files/);
     });
   });
 });

@@ -2,11 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { Tokenizer, ModelFamily } from './tokenizer';
-
-const IGNORE_DIRS = new Set([
-  'node_modules', '.git', 'dist', 'build', 'out', '.next', '.nuxt',
-  '__pycache__', '.venv', 'venv', '.cache', 'coverage', '.turbo',
-]);
+import { SmartContextScanner, ScanResult } from './smartContextScanner';
 
 const IGNORE_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp',
@@ -14,47 +10,35 @@ const IGNORE_EXTENSIONS = new Set([
   '.lock', '.log', '.map',
 ]);
 
-// Extensions that require suffix matching because path.extname won't catch them
-const IGNORE_SUFFIXES = ['.min.js', '.min.css'];
-
-const MAX_FILE_BYTES = 100_000;
-const DIVERSITY_FLOOR_TOKENS = 2000;
-
-// Conservative chars-per-token ratio used for fast (no-read) size estimation
-const FAST_ESTIMATE_CHARS_PER_TOKEN = 3.5;
-
-interface ScoredFile {
-  fullPath: string;
-  relativePath: string;
-  score: number;
-  size: number;
-}
-
-interface PackedFile {
-  relativePath: string;
-  content: string;
-  tokens: number;
-  truncated: boolean;
-}
+const MAX_ACTIVE_FILE_BYTES = 500_000;
+const TRUNCATION_COMMENT = '// [TRUNCATED: Only first {tokens} tokens shown to preserve context budget]';
 
 /**
- * ContextManager builds a ranked, token-budgeted snapshot of workspace files
- * to inject as context when chatting with LM Studio models.
+ * ContextManager injects the active editor file into the system prompt context
+ * when it is not already referenced in the conversation messages. When the
+ * smart context scanner is enabled, it also injects workspace files that are
+ * relevant to the conversation's content.
  */
 export class ContextManager {
   private readonly logger: vscode.LogOutputChannel;
   private readonly tokenizer: Tokenizer;
+  private readonly smartScanner: SmartContextScanner;
 
   constructor(logger: vscode.LogOutputChannel, tokenizer: Tokenizer) {
     this.logger = logger;
     this.tokenizer = tokenizer;
+    this.smartScanner = new SmartContextScanner(logger, tokenizer);
   }
 
   /**
-   * Build a ranked context block from the workspace, ready to prepend to a prompt.
-   * Returns an empty string if the feature is disabled or no files are found.
+   * Build a context block from the active editor file and (if enabled) smart
+   * workspace scan results. Returns an empty string when context injection is
+   * disabled, no relevant content is found, or all files are already in messages.
    */
-  public async buildContext(currentFilePath?: string, modelId = ''): Promise<string> {
+  public async buildContext(
+    messages: readonly vscode.LanguageModelChatRequestMessage[],
+    modelId = ''
+  ): Promise<string> {
     const config = vscode.workspace.getConfiguration('lmStudioCopilot');
     if (!config.get<boolean>('enableContextPrioritization', true)) {
       this.logger.debug('Context Prioritization: Disabled');
@@ -62,206 +46,190 @@ export class ContextManager {
     }
 
     const budget = config.get<number>('contextTokenBudget', 20000);
-    const folders = vscode.workspace.workspaceFolders;
-    if (!folders || folders.length === 0) {
+    if (budget <= 0) {
+      this.logger.debug('Context Prioritization: Token budget is 0, skipping');
       return '';
     }
-
-    const rootPath = folders[0].uri.fsPath;
-    const scored = await this.collectAndScore(rootPath, currentFilePath);
-    scored.sort((a, b) => b.score - a.score);
-
-    this.logger.debug(`Context Prioritization: Found ${scored.length} candidate files`);
 
     const family = this.tokenizer.detectFamily(modelId, undefined);
-    const packed = await this.pack(scored, budget, modelId, family);
+    const folders = vscode.workspace.workspaceFolders;
+    const rootPath = folders?.[0]?.uri.fsPath;
 
-    if (packed.length === 0) {
-      this.logger.debug('Context Prioritization: No files packed within budget');
+
+    // --- Active editor injection (WI-95 baseline) ---
+    let activeFilePath: string | undefined;
+    let activeSection = '';
+    let activeTokens = 0;
+    let activeTruncated = false;
+
+    const activeEditor = vscode.window.activeTextEditor;
+    if (activeEditor && activeEditor.document.uri.scheme === 'file') {
+      const filePath = activeEditor.document.uri.fsPath;
+      const ext = path.extname(filePath).toLowerCase();
+      if (
+        !IGNORE_EXTENSIONS.has(ext) &&
+        !this.isAlreadyInMessages(filePath, messages)
+      ) {
+        const result = await this.readAndFitFile(filePath, budget, modelId, family);
+        if (result !== null) {
+          activeFilePath = filePath;
+          activeTruncated = result.truncated;
+          const relativePath = rootPath
+            ? path.relative(rootPath, filePath)
+            : path.basename(filePath);
+          const truncatedSuffix = result.truncated ? ` (Truncated: ${path.basename(filePath)})` : '';
+          activeSection = `### ${relativePath}\n\`\`\`\n${result.content}\n\`\`\``;
+          activeTokens = result.tokens;
+
+          this.logger.info(
+            `Context Prioritization: Injected active file ${relativePath}, ~${activeTokens} tokens${truncatedSuffix}`
+          );
+        }
+      }
+    }
+
+    // --- Smart context scanner (optional) ---
+    let scannerSections: string[] = [];
+    let scannerTokens = 0;
+
+    const smartEnabled = config.get<boolean>('enableSmartContextScanner', false);
+    if (smartEnabled) {
+      const maxFilesToScan = config.get<number>('smartContextScanner.maxFilesToScan', 50);
+      const maxResultFiles = config.get<number>('smartContextScanner.maxResultFiles', 5);
+      const remainingBudget = budget - activeTokens;
+
+      if (remainingBudget > 0) {
+        const signals = this.smartScanner.extractSignals(messages);
+
+        if (signals.hasSufficientSignal) {
+          // Build set of paths to exclude from scanner results (active editor path)
+          const alreadyInjected = new Set<string>();
+          if (activeFilePath) {
+            alreadyInjected.add(activeFilePath.replace(/\\/g, '/'));
+            alreadyInjected.add(activeFilePath);
+          }
+
+          const scanResults = await this.smartScanner.scan(
+            signals,
+            alreadyInjected,
+            remainingBudget,
+            maxFilesToScan,
+            maxResultFiles,
+            modelId,
+            family
+          );
+
+          for (const r of scanResults) {
+            const truncSuffix = r.truncated ? ` (Truncated: ${path.basename(r.relativePath)})` : '';
+            scannerSections.push(`### ${r.relativePath}\n\`\`\`\n${r.content}\n\`\`\``);
+            scannerTokens += r.tokens;
+            this.logger.debug(`SmartContextScanner: Included ${r.relativePath}${truncSuffix}`);
+          }
+        } else {
+          this.logger.debug('SmartContextScanner: No sufficient signal in conversation, skipping scan');
+        }
+      } else {
+        this.logger.debug('SmartContextScanner: No token budget remaining after active file, skipping');
+      }
+    }
+
+    // --- Assemble final context block ---
+    const allSections: string[] = [];
+    if (activeSection) allSections.push(activeSection);
+    allSections.push(...scannerSections);
+
+    if (allSections.length === 0) {
       return '';
     }
 
-    const totalTokens = packed.reduce((sum, f) => sum + f.tokens, 0);
-    const truncatedNames = packed
-      .filter(f => f.truncated)
-      .map(f => path.basename(f.relativePath));
+    const totalTokens = activeTokens + scannerTokens;
+    const fileCount = allSections.length;
+    const fileWord = fileCount === 1 ? 'file' : 'files';
+    const truncatedSuffix = activeTruncated ? ` (Truncated: ${path.basename(activeFilePath!)})` : '';
 
-    const truncatedSuffix = truncatedNames.length > 0
-      ? ` (Truncated: ${truncatedNames.join(', ')})`
-      : '';
-
-    this.logger.info(
-      `Context Prioritization: Packed ${packed.length} files, ~${totalTokens} tokens${truncatedSuffix}`
-    );
-
-    const sections = packed.map(
-      f => `### ${f.relativePath}\n\`\`\`\n${f.content}\n\`\`\``
-    );
-
-    return `[Workspace Context — ${packed.length} files, ~${totalTokens} tokens${truncatedSuffix}]\n\n${sections.join('\n\n')}`;
+    return `[Workspace Context — ${fileCount} ${fileWord}, ~${totalTokens} tokens${truncatedSuffix}]\n\n${allSections.join('\n\n')}`;
   }
 
   /**
-   * Estimate the token count of context that would be built, without reading file
-   * contents. Uses file sizes and a conservative chars-per-token ratio for speed.
+   * Returns true if the given file path (or its basename) appears anywhere in the
+   * text content of the conversation messages.
    */
-  public async estimateContextSize(currentFilePath?: string): Promise<number> {
-    const config = vscode.workspace.getConfiguration('lmStudioCopilot');
-    if (!config.get<boolean>('enableContextPrioritization', true)) {
-      return 0;
-    }
+  private isAlreadyInMessages(
+    activeFilePath: string,
+    messages: readonly vscode.LanguageModelChatRequestMessage[]
+  ): boolean {
+    const normalizedPath = activeFilePath.replace(/\\/g, '/');
+    const basename = path.basename(activeFilePath);
 
-    const budget = config.get<number>('contextTokenBudget', 20000);
-    const folders = vscode.workspace.workspaceFolders;
-    if (!folders || folders.length === 0) {
-      return 0;
-    }
-
-    const rootPath = folders[0].uri.fsPath;
-    const scored = await this.collectAndScore(rootPath, currentFilePath);
-    scored.sort((a, b) => b.score - a.score);
-
-    let total = 0;
-    for (const f of scored) {
-      const estimated = Math.ceil(f.size / FAST_ESTIMATE_CHARS_PER_TOKEN);
-      const contribution = Math.min(estimated, DIVERSITY_FLOOR_TOKENS);
-      if (total + contribution > budget) break;
-      total += contribution;
-    }
-
-    return total;
-  }
-
-  private async collectAndScore(rootPath: string, currentFilePath?: string): Promise<ScoredFile[]> {
-    const results: ScoredFile[] = [];
-    const currentDir = currentFilePath ? path.dirname(currentFilePath) : null;
-    await this.walk(rootPath, rootPath, currentDir, results);
-    return results;
-  }
-
-  private async walk(
-    dir: string,
-    rootPath: string,
-    currentDir: string | null,
-    results: ScoredFile[]
-  ): Promise<void> {
-    let entries: import('fs').Dirent[];
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true }) as import('fs').Dirent[];
-    } catch {
-      return;
-    }
-
-    for (const entry of entries) {
-      const name = String(entry.name);
-      const fullPath = path.join(dir, name);
-
-      if (entry.isDirectory()) {
-        if (!IGNORE_DIRS.has(name) && !name.startsWith('.')) {
-          await this.walk(fullPath, rootPath, currentDir, results);
-        }
-      } else if (entry.isFile()) {
-        const ext = path.extname(name).toLowerCase();
-        if (IGNORE_EXTENSIONS.has(ext)) continue;
-        if (IGNORE_SUFFIXES.some(suffix => name.endsWith(suffix))) continue;
-
-        try {
-          const stat = await fs.stat(fullPath);
-          if (stat.size > MAX_FILE_BYTES) continue;
-
-          const relativePath = path.relative(rootPath, fullPath);
-          const score = this.scoreFile(fullPath, relativePath, stat.mtimeMs, currentDir);
-          results.push({ fullPath, relativePath, score, size: stat.size });
-        } catch {
-          // Skip files that cannot be stat'd (permissions, broken symlinks, etc.)
+    for (const msg of messages) {
+      if (
+        msg.role !== vscode.LanguageModelChatMessageRole.User &&
+        msg.role !== vscode.LanguageModelChatMessageRole.Assistant
+      ) {
+        continue;
+      }
+      for (const part of msg.content) {
+        if (part instanceof vscode.LanguageModelTextPart) {
+          const text = part.value;
+          if (text.includes(normalizedPath) || text.includes(activeFilePath) || text.includes(basename)) {
+            return true;
+          }
         }
       }
     }
+
+    return false;
   }
 
-  private scoreFile(
-    fullPath: string,
-    relativePath: string,
-    mtimeMs: number,
-    currentDir: string | null
-  ): number {
-    let score = 0;
-
-    // Recency: recently modified files are more likely to be relevant
-    const ageMs = Date.now() - mtimeMs;
-    if (ageMs < 3_600_000) score += 10;       // < 1 hour
-    else if (ageMs < 86_400_000) score += 5;  // < 24 hours
-
-    // Proximity: same directory as the active editor file
-    if (currentDir && path.dirname(fullPath) === currentDir) score += 8;
-
-    // Depth penalty: prefer shallower files (root-level files tend to be more structural)
-    const depth = relativePath.split(path.sep).length;
-    score -= depth;
-
-    // Identity: well-known high-value filenames
-    const name = path.basename(fullPath);
-    if (/^(index|main|app|extension)\.[a-z]+$/i.test(name)) score += 3;
-    if (name === 'types.ts' || name === 'types.d.ts') score += 4;
-    if (name.endsWith('.config.ts') || name.endsWith('.config.js')) score += 2;
-
-    return score;
-  }
-
-  private async pack(
-    scoredFiles: ScoredFile[],
+  /**
+   * Read a file and fit it within the token budget. Returns null if the file
+   * cannot be read, is too large, or has no safe truncation point.
+   */
+  private async readAndFitFile(
+    filePath: string,
     budget: number,
     modelId: string,
     family: ModelFamily
-  ): Promise<PackedFile[]> {
-    const packed: PackedFile[] = [];
-    let remaining = budget;
-
-    for (const f of scoredFiles) {
-      if (remaining <= 0) break;
-
-      let content: string;
-      try {
-        content = await fs.readFile(f.fullPath, 'utf-8');
-      } catch {
-        continue;
-      }
-
-      const tokens = this.tokenizer.estimateTokens(content, modelId, family);
-
-      if (tokens <= DIVERSITY_FLOOR_TOKENS) {
-        // Small file: include in full if it fits
-        if (tokens <= remaining) {
-          packed.push({ relativePath: f.relativePath, content, tokens, truncated: false });
-          remaining -= tokens;
-        }
-      } else if (remaining >= tokens * 2) {
-        // Large file with ample budget: include in full
-        if (tokens <= remaining) {
-          packed.push({ relativePath: f.relativePath, content, tokens, truncated: false });
-          remaining -= tokens;
-        }
-      } else if (remaining >= DIVERSITY_FLOOR_TOKENS) {
-        // Budget is constrained: truncate to diversity floor
-        const truncated = this.truncateToTokens(content, DIVERSITY_FLOOR_TOKENS, modelId, family);
-        if (truncated === null) continue; // Zero-line safety: skip rather than emit broken content
-
-        packed.push({
-          relativePath: f.relativePath,
-          content: truncated,
-          tokens: DIVERSITY_FLOOR_TOKENS,
-          truncated: true,
-        });
-        remaining -= DIVERSITY_FLOOR_TOKENS;
-      }
+  ): Promise<{ content: string; tokens: number; truncated: boolean } | null> {
+    let stat: { size: number };
+    try {
+      stat = await fs.stat(filePath);
+    } catch (err) {
+      this.logger.warn(`Context Prioritization: Cannot stat active file ${filePath}: ${err}`);
+      return null;
     }
 
-    return packed;
+    if (stat.size > MAX_ACTIVE_FILE_BYTES) {
+      this.logger.debug(`Context Prioritization: Active file too large (${stat.size} bytes), skipping`);
+      return null;
+    }
+
+    let content: string;
+    try {
+      content = await fs.readFile(filePath, 'utf-8');
+    } catch (err) {
+      this.logger.warn(`Context Prioritization: Cannot read active file ${filePath}: ${err}`);
+      return null;
+    }
+
+    const tokens = this.tokenizer.estimateTokens(content, modelId, family);
+
+    if (tokens <= budget) {
+      return { content, tokens, truncated: false };
+    }
+
+    const truncated = this.truncateToTokens(content, budget, modelId, family);
+    if (truncated === null) {
+      this.logger.debug(`Context Prioritization: Cannot safely truncate ${filePath}, skipping`);
+      return null;
+    }
+
+    return { content: truncated, tokens: budget, truncated: true };
   }
 
   /**
    * Truncate content to approximately targetTokens, cutting only at a newline
-   * boundary. Returns null if no safe truncation point exists (zero-line safety).
+   * boundary. Returns null if no safe truncation point exists.
    */
   private truncateToTokens(
     content: string,
@@ -279,6 +247,7 @@ export class ContextManager {
     if (newlineIndex <= 0) return null;
 
     const head = content.slice(0, newlineIndex);
-    return `${head}\n// [TRUNCATED: Only first ${targetTokens} tokens shown to preserve context budget]`;
+    const marker = TRUNCATION_COMMENT.replace('{tokens}', String(targetTokens));
+    return `${head}\n${marker}`;
   }
 }
