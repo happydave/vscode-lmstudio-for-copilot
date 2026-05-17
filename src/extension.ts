@@ -55,16 +55,44 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Listen for configuration changes and update services accordingly
   context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((e) => {
+    vscode.workspace.onDidChangeConfiguration(async (e) => {
       if (e.affectsConfiguration('lmStudioCopilot.showReasoningContent')) {
         chatClient.updateConfiguration();
-      } else if (
+      }
+      
+      if (
         e.affectsConfiguration('lmStudioCopilot.discoveryMaxRetries') ||
         e.affectsConfiguration('lmStudioCopilot.discoveryBaseRetryDelayMs')
       ) {
         discoveryService.updateRetryConfiguration();
-      } else if (e.affectsConfiguration('lmStudioCopilot.modelFamilyOverrides')) {
+      }
+      
+      if (e.affectsConfiguration('lmStudioCopilot.modelFamilyOverrides')) {
         tokenizer.loadConfiguration();
+      }
+
+      if (
+        e.affectsConfiguration('lmStudioCopilot.serverHost') ||
+        e.affectsConfiguration('lmStudioCopilot.serverPort') ||
+        e.affectsConfiguration('lmStudioCopilot.requestTimeout') ||
+        e.affectsConfiguration('lmStudioCopilot.disableAllTimeouts')
+      ) {
+        const updated = vscode.workspace.getConfiguration('lmStudioCopilot');
+        const newHost = updated.get<string>('serverHost', 'localhost');
+        const newPort = updated.get<number>('serverPort', 1234);
+        const disableAllTimeouts = updated.get<boolean>('disableAllTimeouts', true);
+        const newTimeout = disableAllTimeouts ? 0 : updated.get<number>('requestTimeout', 86400000);
+        
+        discoveryService.setHost(newHost);
+        discoveryService.setPort(newPort);
+        discoveryService.setRequestTimeout(newTimeout);
+        chatClient.setHost(newHost);
+        chatClient.setPort(newPort);
+        chatClient.setRequestTimeout(newTimeout);
+        
+        outputChannel.info(`Configuration updated: host=${newHost}, port=${newPort}, timeout=${disableAllTimeouts ? 'disabled' : `${newTimeout}ms`}`);
+        
+        await performDiscovery();
       }
     })
   );
@@ -120,43 +148,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   context.subscriptions.push(completionProvider);
 
-  // React to configuration changes
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration(e => {
-      if (e.affectsConfiguration('lmStudioCopilot')) {
-        const updated = vscode.workspace.getConfiguration('lmStudioCopilot');
-        const newHost = updated.get<string>('serverHost', 'localhost');
-        const newPort = updated.get<number>('serverPort', 1234);
-        const newTimeout = updated.get<number>('requestTimeout', 30000);
-        discoveryService.setHost(newHost);
-        discoveryService.setPort(newPort);
-        discoveryService.setRequestTimeout(newTimeout);
-        chatClient.setHost(newHost);
-        chatClient.setPort(newPort);
-        chatClient.setRequestTimeout(newTimeout);
-        outputChannel.info(`Configuration updated: host=${newHost}, port=${newPort}, timeout=${newTimeout}ms`);
-        performDiscovery().catch(error => {
-          outputChannel.error(`Discovery after config change failed: ${error}`);
-        });
-      }
-    })
-  );
-
-  // Initial discovery
-  await performDiscovery();
+  // Initial discovery (non-blocking)
+  performDiscovery().catch(error => {
+    outputChannel.error(`Initial discovery failed: ${error}`);
+  });
 
   outputChannel.info('LM Studio Copilot initialization complete');
 }
 
 /**
- * Perform model discovery and update UI with rate limiting
+ * Perform model discovery and update UI
  */
 async function performDiscovery(): Promise<void> {
   try {
-    await modelManager.updateFromDiscovery();
-    
-    // Use throttled check to prevent rapid successive calls
-    const status = await discoveryService.checkConnectionWithThrottle();
+    // Perform discovery and update model manager
+    const status = await modelManager.updateFromDiscovery();
     const modelName = modelManager.getActiveModelName();
     
     statusBarIndicator.updateState(

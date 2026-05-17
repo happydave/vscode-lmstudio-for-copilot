@@ -43,7 +43,7 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
     options: vscode.PrepareLanguageModelChatModelOptions,
     token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelChatInformation[]> {
-    this.logger.debug(`provideLanguageModelChatInformation called`);
+    this.logger.debug(`provideLanguageModelChatInformation called (silent: ${options.silent})`);
 
     try {
       const availableModels = this.modelManager.getAvailableModels();
@@ -55,19 +55,29 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
 
       const modelInfo: vscode.LanguageModelChatInformation[] = availableModels
         .map((model) => {
-          const totalContext = model.loadedContextLength ?? model.maxContextLength ?? 4096;
+          // Get context length, defaulting to a safe minimum of 8192 if unknown
+          // Copilot Chat often hides models if maxInputTokens is too small to fit its system prompt
+          const totalContext = Math.max(model.loadedContextLength ?? model.maxContextLength ?? 8192, 8192);
+          
           // Reserve room for large code generation (up to 32k) while keeping total display accurate
           const outputReservation = Math.min(32768, Math.floor(totalContext / 4));
-          
+
+          // Sanitize ID to ensure it is URL/URI safe for VS Code's internal routing
+          // Replace slashes and special characters with hyphens, and ensure a unique prefix
+          const safeId = `lmstudio-${model.id.replace(/[^a-zA-Z0-9-]/g, '-')}`;
+
           return {
-            id: model.id,
-            name: model.id,
-            family: 'lmstudio-local',
-            version: '1',
+            id: safeId,
+            name: model.name,
+            family: 'lmstudio', // Hardcoded family to ensure proper grouping in VS Code UI
+            version: '1.0.0',
             maxInputTokens: totalContext - outputReservation,
             maxOutputTokens: outputReservation,
-            capabilities: { toolCalling: true }
-          } satisfies vscode.LanguageModelChatInformation;
+            detail: model.architecture ? `Architecture: ${model.architecture}` : 'LM Studio Local Model',
+            tooltip: `Local model: ${model.name} (${model.architecture || 'unknown'})`,
+            capabilities: { toolCalling: true },
+            isUserSelectable: true // Required for VS Code 1.94+ to show the model in the "> Other Models" list by default
+          } as any;
         });
 
       return modelInfo;
@@ -79,7 +89,6 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
 
   /**
    * Notify VS Code that the set of available models has changed.
-   * Must be called whenever model discovery updates the model list.
    */
   private lastModelIds: string = '';
 
@@ -106,24 +115,33 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
     token: vscode.CancellationToken
   ): Promise<void> {
     try {
-      this.logger.debug(`provideLanguageModelChatResponse: model=${model.id}, messages=${messages.length}, tools=${options.tools?.length ?? 0}`);
+      const safeId = model.id;
+
+      this.logger.debug(`provideLanguageModelChatResponse: model=${safeId}, messages=${messages.length}, tools=${options.tools?.length ?? 0}`);
+
+      // We need to map the sanitized ID back to the real LM Studio model ID
+      const activeModel = this.modelManager.getAvailableModels().find(m => `lmstudio-${m.id.replace(/[^a-zA-Z0-9-]/g, '-')}` === safeId);
+      
+      if (!activeModel) {
+        throw new Error(`Model not found for sanitized ID: ${safeId}`);
+      }
 
       // 1. Gather context from active editor (if not already in messages)
-    const workspaceContext = await this.contextManager.buildContext(messages, model.id);
+      const workspaceContext = await this.contextManager.buildContext(messages, activeModel.id);
 
-    // 2. Prepare request using RequestBuilder
-    const activeModel = this.modelManager.getAvailableModels().find(m => m.id === model.id);
-    const { 
-      chatMessages, 
-      tools, 
-      totalCharsSent, 
-      effectiveLimit 
-    } = this.requestBuilder.buildRequest(messages, options, model, activeModel, workspaceContext);
+      // 2. Prepare request using RequestBuilder
+      const { 
+        chatMessages, 
+        tools, 
+        totalCharsSent, 
+        effectiveLimit 
+      } = this.requestBuilder.buildRequest(messages, options, model, activeModel, workspaceContext);
 
-    // Resolve temperature override for this model
-    const config = vscode.workspace.getConfiguration('lmStudioCopilot');
-    const modelTemperatures = config.get<Record<string, number>>('modelTemperatures', {});
-    const temperatureOverride = modelTemperatures[model.id];
+      // Resolve temperature override for this model
+      const config = vscode.workspace.getConfiguration('lmStudioCopilot');
+      const modelTemperatures = config.get<Record<string, number>>('modelTemperatures', {});
+      const temperatureOverride = modelTemperatures[activeModel.id];
+
 
     // 2. Execute streaming completion request
     const streamingPath = (async () => {
@@ -352,23 +370,37 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
     if (typeof text === 'string') {
       content = text;
     } else {
-      content = text.content
-        .map(part => {
-          if (part instanceof vscode.LanguageModelTextPart) {
-            return part.value;
-          }
-          return '';
-        })
-        .join('');
+      // Handle both proposed (content as string) and stable (content as array of parts)
+      if (typeof (text as any).content === 'string') {
+        content = (text as any).content;
+      } else if (Array.isArray(text.content)) {
+        content = text.content
+          .map(part => {
+            if (part instanceof vscode.LanguageModelTextPart) {
+              return part.value;
+            }
+            // Fallback for different module instances
+            if (part && typeof part === 'object' && 'value' in part && typeof (part as any).value === 'string') {
+              return (part as any).value;
+            }
+            return '';
+          })
+          .join('');
+      } else {
+        content = '';
+      }
     }
 
     // Use model-aware tokenizer for more accurate count
-    const activeModel = this.modelManager.getAvailableModels().find(m => m.id === model.id);
-    const family = this.tokenizer.detectFamily(model.id, activeModel?.architecture);
-    const estimatedTokens = this.tokenizer.estimateTokens(content, model.id, family);
-
-    this.logger.trace(`Token count estimate for model ${model.id}: ${estimatedTokens}`);
-
+    const safeId = model.id;
+    const activeModel = this.modelManager.getAvailableModels().find(m => `lmstudio-${m.id.replace(/[^a-zA-Z0-9-]/g, '-')}` === safeId);
+    
+    // Fallback if not found
+    const realId = activeModel ? activeModel.id : safeId.replace(/^lmstudio-/, '');
+    
+    const family = this.tokenizer.detectFamily(realId, activeModel?.architecture);
+    const estimatedTokens = this.tokenizer.estimateTokens(content, realId, family);
+    
     return estimatedTokens;
   }
 }

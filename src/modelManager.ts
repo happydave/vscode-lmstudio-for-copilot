@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ModelInfo, ConnectionState, DiscoveryService } from './discovery';
+import { ModelInfo, ConnectionState, DiscoveryService, LMStudioStatus } from './discovery';
 
 /**
  * ModelManager handles the selection and management of models for use with LM Studio.
@@ -20,7 +20,7 @@ export class ModelManager {
   /**
    * Update the list of available models and set active model based on LM Studio state.
    */
-  public async updateFromDiscovery(): Promise<void> {
+  public async updateFromDiscovery(): Promise<LMStudioStatus> {
     const status = await this.discoveryService.checkConnection();
     
     switch (status.connectionState) {
@@ -43,6 +43,7 @@ export class ModelManager {
     }
 
     this.logger.trace(`ModelManager updated. Active model: ${this.activeModelId || 'none'}`);
+    return status;
   }
 
   /**

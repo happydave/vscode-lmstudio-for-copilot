@@ -2,14 +2,14 @@
   "name": "lmstudio-for-copilot",
   "displayName": "LM Studio Copilot",
   "description": "VS Code extension providing inline code completion powered by LM Studio models with automatic discovery",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "publisher": "lmstudio",
   "repository": {
     "type": "git",
     "url": "https://github.com/lmstudio-ai/vscode-lmstudio"
   },
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.90.0"
   },
   "categories": [
     "Programming Languages",
@@ -32,7 +32,8 @@
     "onLanguage:rust",
     "onLanguage:java",
     "onLanguage:csharp",
-    "onStartupFinished"
+    "onStartupFinished",
+    "onLanguageModelChatProvider:lmstudio"
   ],
   "main": "./dist/extension.js",
   "contributes": {

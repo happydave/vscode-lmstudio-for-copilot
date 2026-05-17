@@ -59,7 +59,7 @@ describe('LMStudioCopilotProvider', () => {
   it('should provide model information', async () => {
     const info = await provider.provideLanguageModelChatInformation({} as any, {} as any);
     expect(info.length).toBe(1);
-    expect(info[0].id).toBe('test-model');
+    expect(info[0].id).toBe('lmstudio-test-model');
   });
 
   it('should stream response and report progress', async () => {
@@ -70,7 +70,7 @@ describe('LMStudioCopilotProvider', () => {
     mockChatClient.streamCompletion.mockReturnValue(mockStream);
 
     const progress = { report: jest.fn() };
-    const model = { id: 'test-model' } as any;
+    const model = { id: 'lmstudio-test-model' } as any;
     const messages = [] as any;
     const options = {} as any;
     const token = { isCancellationRequested: false } as any;
@@ -78,7 +78,7 @@ describe('LMStudioCopilotProvider', () => {
     await provider.provideLanguageModelChatResponse(model, messages, options, progress, token);
 
     expect(progress.report).toHaveBeenCalledWith(expect.any(vscode.LanguageModelTextPart));
-    expect(mockTokenizer.recordObservation).toHaveBeenCalledWith('test-model', 100, 10);
+    expect(mockTokenizer.recordObservation).toHaveBeenCalledWith('lmstudio-test-model', 100, 10);
   });
 
   it('should handle XML tool calls', async () => {
@@ -88,7 +88,7 @@ describe('LMStudioCopilotProvider', () => {
     mockChatClient.streamCompletion.mockReturnValue(mockStream);
 
     const progress = { report: jest.fn() };
-    const model = { id: 'test-model' } as any;
+    const model = { id: 'lmstudio-test-model' } as any;
     const messages = [] as any;
     const options = {} as any;
     const token = { isCancellationRequested: false } as any;
@@ -115,7 +115,7 @@ describe('LMStudioCopilotProvider', () => {
     mockChatClient.streamCompletion.mockReturnValue(mockStream);
 
     const progress = { report: jest.fn() };
-    const model = { id: 'test-model' } as any;
+    const model = { id: 'lmstudio-test-model' } as any;
     const messages = [] as any;
     const options = {} as any;
     const token = { isCancellationRequested: false } as any;
@@ -123,7 +123,7 @@ describe('LMStudioCopilotProvider', () => {
     await provider.provideLanguageModelChatResponse(model, messages, options, progress, token);
 
     expect(mockChatClient.streamCompletion).toHaveBeenCalledWith(
-      'test-model',
+      'lmstudio-test-model',
       expect.any(Array),
       undefined,
       0.1
@@ -149,7 +149,7 @@ describe('LMStudioCopilotProvider', () => {
     mockChatClient.streamCompletion.mockReturnValue(mockStream);
 
     const progress = { report: jest.fn() };
-    const model = { id: 'test-model' } as any;
+    const model = { id: 'lmstudio-test-model' } as any;
     const messages = [] as any;
     const options = {} as any;
     const token = { isCancellationRequested: false } as any;
@@ -186,7 +186,7 @@ describe('LMStudioCopilotProvider', () => {
     mockChatClient.streamCompletion.mockReturnValue(mockStream);
 
     const progress = { report: jest.fn() };
-    const model = { id: 'test-model' } as any;
+    const model = { id: 'lmstudio-test-model' } as any;
     const messages = [] as any;
     const options = {} as any;
     const token = { isCancellationRequested: false } as any;
@@ -213,7 +213,7 @@ describe('LMStudioCopilotProvider', () => {
   it('should handle errors in provideLanguageModelChatResponse', async () => {
     mockRequestBuilder.buildRequest.mockImplementation(() => { throw new Error('Test Error'); });
     const progress = { report: jest.fn() };
-    const model = { id: 'test-model' } as any;
+    const model = { id: 'lmstudio-test-model' } as any;
     const messages = [] as any;
     const options = {} as any;
     const token = { isCancellationRequested: false } as any;

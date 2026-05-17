@@ -171,20 +171,32 @@ export class DiscoveryService {
 
     const body = await response.json().catch(err => {
       throw new ParseError(err instanceof Error ? err.message : String(err));
-    }) as LMStudioModelsResponse;
-    const modelsData = body.models;
+    }) as any;
+    
+    // Handle both native LM Studio format (models) and OpenAI compatible format (data)
+    const modelsData = body.models || body.data;
+    
+    if (!modelsData || !Array.isArray(modelsData)) {
+      this.logger.debug(`Unexpected response body: ${JSON.stringify(body).substring(0, 200)}...`);
+      throw new ParseError('Response from LM Studio does not contain a valid models or data array');
+    }
+    
     this.logger.debug(`Found ${modelsData.length} models in LM Studio`);
 
     const availableModels: ModelInfo[] = modelsData.map(model => {
       const loadedInstance = model.loaded_instances?.[0];
+      // Support both old 'key'/'display_name' and new 'id'/'name' formats
+      const id = model.id || model.key;
+      const name = model.name || model.display_name || id;
+      
       return {
-        id: model.key,
-        name: model.display_name || model.key,
+        id: id,
+        name: name,
         loaded: !!loadedInstance,
         architecture: model.architecture || undefined,
         object: 'model',
-        maxContextLength: model.max_context_length || undefined,
-        loadedContextLength: loadedInstance?.config?.context_length || undefined,
+        maxContextLength: model.max_context_length ? Number(model.max_context_length) : undefined,
+        loadedContextLength: loadedInstance?.config?.context_length ? Number(loadedInstance.config.context_length) : undefined,
         quantizationInfo: model.quantization?.name || undefined
       };
     });
