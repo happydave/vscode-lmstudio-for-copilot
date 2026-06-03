@@ -26,6 +26,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Connection storage and manager
   const connectionStorage = new ConnectionStorage(context);
+  await connectionStorage.migrateFromWorkspaceConfig();
   const getToken = (name: string) => connectionStorage.getToken(name);
   const connectionManager = new ConnectionManager(context, connectionStorage, getToken);
 

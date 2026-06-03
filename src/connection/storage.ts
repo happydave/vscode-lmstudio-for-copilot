@@ -8,8 +8,7 @@ export class ConnectionStorage {
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   getConnections(): ConnectionConfig[] {
-    const config = vscode.workspace.getConfiguration();
-    const connections = config.get<ConnectionConfig[]>(CONNECTIONS_KEY, []);
+    const connections = this.context.globalState.get<ConnectionConfig[]>(CONNECTIONS_KEY, []);
     return connections.map((c) => ({
       name: c.name,
       scheme: c.scheme ?? "http",
@@ -19,8 +18,19 @@ export class ConnectionStorage {
   }
 
   async saveConnections(connections: ConnectionConfig[]): Promise<void> {
-    const config = vscode.workspace.getConfiguration();
-    await config.update(CONNECTIONS_KEY, connections, vscode.ConfigurationTarget.Global);
+    await this.context.globalState.update(CONNECTIONS_KEY, connections);
+  }
+
+  async migrateFromWorkspaceConfig(): Promise<void> {
+    const alreadyMigrated = this.context.globalState.get<boolean>("lmstudioManager.migrated", false);
+    if (alreadyMigrated) { return; }
+    const wsConfig = vscode.workspace.getConfiguration();
+    const legacy = wsConfig.get<ConnectionConfig[]>(CONNECTIONS_KEY);
+    if (legacy && legacy.length > 0) {
+      await this.context.globalState.update(CONNECTIONS_KEY, legacy);
+      await wsConfig.update(CONNECTIONS_KEY, undefined, vscode.ConfigurationTarget.Global);
+    }
+    await this.context.globalState.update("lmstudioManager.migrated", true);
   }
 
   async getToken(name: string): Promise<string | undefined> {
