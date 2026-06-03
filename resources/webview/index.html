@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src {{cspSource}}; img-src {{cspSource}} data:; connect-src vscode-webview://* http://* https://*;">
+  <title>LM Studio Configuration</title>
+  <link rel="stylesheet" href="{{webviewUri}}/styles.css">
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────── -->
+<div class="header">
+  <h1>LM Studio Configuration</h1>
+  <div class="header-actions">
+    <button id="btn-refresh-all" title="Refresh All" class="btn-icon">&#x21bb;</button>
+  </div>
+</div>
+
+<!-- ── Server List Section ─────────────────────────────────── -->
+<div class="section" id="server-section">
+  <div class="section-header" data-section="servers">
+    <span class="section-title">&#x1f50c; Servers</span>
+    <span class="btn-icon" id="btn-add-server" title="Add Server">&#x2795;</span>
+  </div>
+  <div class="section-body" id="server-list"></div>
+</div>
+
+<!-- ── Model Browser Section ───────────────────────────────── -->
+<div class="section" id="model-section">
+  <div class="section-header" data-section="models">
+    <span class="section-title">&#x1f4da; Models</span>
+    <button id="btn-unload-all" title="Unload All" class="btn-small hidden">Unload All</button>
+  </div>
+  <div class="section-body" id="model-browser"></div>
+</div>
+
+<!-- ── Toast Container ─────────────────────────────────────── -->
+<div id="toast-container"></div>
+
+<!-- ── Templates (hidden) ──────────────────────────────────── -->
+<template id="tpl-server-card">
+  <div class="server-card">
+    <div class="server-info">
+      <div class="server-name"><span class="status-dot"></span><span class="name"></span></div>
+      <div class="server-address"></div>
+    </div>
+    <div class="server-actions">
+      <button class="btn-icon btn-switch" title="Switch Connection">&#x2192;</button>
+      <button class="btn-icon btn-edit" title="Edit Server">&#x270E;</button>
+      <button class="btn-icon btn-remove" title="Remove Server">&#x1f5d1;</button>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-model-card">
+  <div class="model-card">
+    <div class="model-card-header">
+      <span class="model-chevron">&#x25B6;</span>
+      <div class="model-info">
+        <div class="model-name"></div>
+        <div class="model-meta"></div>
+        <div class="badges"></div>
+        <div class="model-promoted-meta"></div>
+      </div>
+      <div class="copilot-toggle">
+        <label class="copilot-label" title="Include in Copilot model picker">
+          <input type="checkbox" class="copilot-checkbox">
+          Copilot
+        </label>
+      </div>
+      <div class="model-actions"></div>
+    </div>
+    <div class="model-details hidden"></div>
+  </div>
+</template>
+
+<!-- ── Add/Edit Server Form Modal ──────────────────────────── -->
+<div id="server-form-overlay" class="form-overlay hidden">
+  <div class="form-modal">
+    <h2 id="server-form-title">Add Server</h2>
+    <input type="hidden" id="edit-server-name" value="">
+    <div class="form-group">
+      <label for="sf-name">Name</label>
+      <input type="text" id="sf-name" placeholder="e.g., Local, Remote Server">
+      <div class="form-error hidden" id="err-sf-name"></div>
+    </div>
+    <div class="form-group">
+      <label for="sf-scheme">Scheme</label>
+      <select id="sf-scheme">
+        <option value="http" selected>&#x2713; HTTP (default)</option>
+        <option value="https">&#x1f512; HTTPS</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="sf-host">Host</label>
+      <input type="text" id="sf-host" placeholder="localhost or 192.168.x.x">
+      <div class="form-error hidden" id="err-sf-host"></div>
+    </div>
+    <div class="form-group">
+      <label for="sf-port">Port</label>
+      <input type="number" id="sf-port" value="1234" min="1" max="65535">
+      <div class="form-error hidden" id="err-sf-port"></div>
+    </div>
+    <div class="form-group">
+      <label for="sf-token">API Token (optional)</label>
+      <input type="password" id="sf-token" placeholder="Leave blank for no authentication">
+    </div>
+    <div class="form-error hidden mt-2" id="err-sf-connect">
+      <span id="err-sf-connect-text"></span>
+      <button id="btn-save-anyway" class="btn-small hidden" style="margin-left:8px;">Save Anyway</button>
+    </div>
+    <div class="form-actions">
+      <button id="btn-server-cancel" class="btn-small">Cancel</button>
+      <button id="btn-server-save" class="btn-small">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Confirm Dialog ──────────────────────────────────────── -->
+<div id="confirm-overlay" class="form-overlay hidden">
+  <div class="confirm-dialog">
+    <p id="confirm-message"></p>
+    <div class="confirm-actions">
+      <button id="btn-confirm-cancel" class="btn-small">Cancel</button>
+      <button id="btn-confirm-ok" class="btn-small btn-danger">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script src="{{webviewUri}}/script.js"></script>
+</body>
+</html>

@@ -1,0 +1,504 @@
+:root {
+  --bg-primary: var(--vscode-editor-background);
+  --bg-secondary: var(--vscode-sideBar-background);
+  --bg-tertiary: var(--vscode-editor-inactiveSelectionBackground);
+  --text-primary: var(--vscode-foreground);
+  --text-secondary: var(--vscode-descriptionForeground);
+  --border-color: var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
+  --accent-color: var(--vscode-button-background);
+  --accent-hover: var(--vscode-button-hoverBackground);
+  --danger-color: #c74a4a;
+  --success-color: #56a54b;
+  --warning-color: #dcb668;
+  --card-bg: var(--vscode-editor-background);
+  --input-bg: var(--vscode-input-background);
+  --input-border: var(--vscode-input-border, rgba(128, 128, 128, 0.3));
+  --input-text: var(--vscode-input-foreground);
+  --input-placeholder: var(--vscode-input-placeholderForeground);
+  --focus-border: var(--vscode-focusBorder);
+  --list-hover: var(--vscode-list-hoverBackground);
+  --list-active: var(--vscode-list-activeSelectionBackground);
+  --status-connected: #56a54b;
+  --status-disconnected: #c74a4a;
+  --status-error: #dcb668;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  font-size: var(--vscode-font-size, 13px);
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
+  padding: 0;
+  line-height: 1.4;
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  position: sticky;
+  top: 0;
+  background: var(--bg-primary);
+  z-index: 10;
+}
+
+.header h1 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+/* ── Buttons ────────────────────────────────────────────── */
+button {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  background: var(--accent-color);
+  color: var(--vscode-button-foreground, #fff);
+  transition: background 0.15s;
+}
+
+button:hover { background: var(--accent-hover); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-icon {
+  padding: 4px 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  min-width: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-icon:hover { background: var(--list-hover); color: var(--text-primary); }
+
+.btn-danger { background: var(--danger-color); }
+.btn-danger:hover { background: #a83d3d; }
+
+.btn-small { padding: 2px 6px; font-size: 11px; }
+
+/* ── Sections ───────────────────────────────────────────── */
+.section {
+  border-bottom: 1px solid var(--border-color);
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.section-header:hover { background: var(--list-hover); }
+
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.section-chevron {
+  transition: transform 0.2s;
+  font-size: 10px;
+}
+
+.section.collapsed .section-chevron { transform: rotate(-90deg); }
+.section.collapsed .section-body { display: none; }
+
+.section-body { padding: 0 8px 8px 8px; }
+
+/* ── Server Cards ───────────────────────────────────────── */
+.server-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.server-card:hover {
+  border-color: var(--focus-border);
+}
+
+.server-card.active {
+  border-color: var(--accent-color);
+  background: rgba(74, 158, 255, 0.08);
+}
+
+.server-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.server-name {
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.server-card.active .server-name { color: var(--accent-color); }
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-dot.connected { background: var(--status-connected); }
+.status-dot.disconnected { background: var(--status-disconnected); }
+.status-dot.error { background: var(--status-error); }
+
+.server-address {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.server-actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+/* ── Forms ──────────────────────────────────────────────── */
+.form-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.form-modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 16px;
+  width: 380px;
+  max-width: 95vw;
+}
+
+.form-modal h2 {
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.form-group {
+  margin-bottom: 10px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 3px;
+  color: var(--text-secondary);
+}
+
+.form-group input,
+.form-group select {
+  width: 100%;
+  padding: 5px 8px;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--input-text);
+  font-family: inherit;
+  font-size: 12px;
+  border-radius: 3px;
+  outline: none;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  border-color: var(--focus-border);
+}
+
+.form-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.form-error {
+  font-size: 11px;
+  color: var(--danger-color);
+  margin-top: 2px;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+/* ── Model Cards ────────────────────────────────────────── */
+.model-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+
+.model-card.loaded {
+  background: rgba(86, 165, 75, 0.08);
+}
+
+.model-card-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  cursor: pointer;
+  gap: 8px;
+}
+
+.model-card-header:hover { background: var(--list-hover); }
+
+.model-chevron {
+  font-size: 10px;
+  color: var(--text-secondary);
+  transition: transform 0.2s;
+  min-width: 12px;
+}
+
+.model-card.expanded .model-chevron { transform: rotate(90deg); }
+
+.model-info { flex: 1; min-width: 0; }
+
+.model-name {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 1px;
+}
+
+.model-promoted-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.model-promoted-meta .meta-label {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.model-actions { display: flex; gap: 2px; align-items: center; }
+
+/* Loaded model unload button — red destructive style */
+.model-card .unload-btn {
+  background: var(--danger-color);
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.model-card .unload-btn:hover {
+  background: #a83d3d;
+}
+
+/* ── Copilot Toggle ─────────────────────────────────────── */
+.copilot-toggle {
+  display: flex;
+  align-items: center;
+  margin-right: 4px;
+}
+
+.copilot-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.copilot-label:hover {
+  color: var(--text-primary);
+}
+
+.copilot-checkbox {
+  width: auto;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent-color);
+}
+
+/* Dim model info when copilot is disabled */
+.model-card.copilot-disabled .model-info {
+  opacity: 0.55;
+}
+
+/* ── Model Details ──────────────────────────────────────── */
+.model-details {
+  padding: 0 10px 8px 30px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.detail-row { margin-bottom: 4px; }
+.detail-label { font-weight: 500; color: var(--text-primary); }
+
+/* ── Capability Badges ──────────────────────────────────── */
+.badges { display: flex; gap: 4px; margin-top: 3px; }
+
+.badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* ── Settings Form in Model Details ──────────────────────── */
+.settings-section {
+  margin-bottom: 8px;
+}
+
+.settings-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 3px;
+}
+
+.settings-section .form-group label { color: var(--text-primary); }
+
+/* ── Toasts / Notifications ─────────────────────────────── */
+#toast-container {
+  position: fixed;
+  bottom: 12px;
+  right: 12px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.toast {
+  padding: 8px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: var(--bg-secondary);
+  border-left: 3px solid var(--accent-color);
+  color: var(--text-primary);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  animation: slideIn 0.2s ease;
+}
+
+.toast.error { border-left-color: var(--danger-color); }
+.toast.success { border-left-color: var(--success-color); }
+.toast.warning { border-left-color: var(--warning-color); }
+
+@keyframes slideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+
+/* ── Spinner / Progress ─────────────────────────────────── */
+.spinner {
+  display: inline-block;
+  width: 14px; height: 14px;
+  border: 2px solid var(--text-secondary);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.progress-bar {
+  height: 3px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--accent-color);
+  animation: progress 2s ease-in-out infinite;
+}
+
+@keyframes progress {
+  0%   { width: 0%; margin-left: 0; }
+  50%  { width: 60%; margin-left: 30%; }
+  100% { width: 0%; margin-left: 100%; }
+}
+
+/* ── Empty State ────────────────────────────────────────── */
+.empty-state {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* ── Confirm Dialog ─────────────────────────────────────── */
+.confirm-dialog {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 16px;
+  width: 300px;
+  max-width: 95vw;
+}
+
+.confirm-dialog p { margin-bottom: 12px; font-size: 13px; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* ── Utility ────────────────────────────────────────────── */
+.hidden { display: none !important; }
+.text-danger { color: var(--danger-color); }
+.mt-2 { margin-top: 4px; }
+.mb-2 { margin-bottom: 4px; }

@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { ModelInfo, ConnectionState, DiscoveryService, LMStudioStatus } from './discovery';
 
+const COPILOT_ENABLED_KEY = 'lmstudioCopilot.copilotEnabledModels';
+
 /**
  * ModelManager handles the selection and management of models for use with LM Studio.
  * Tracks the currently active model and provides methods to switch between available models.
@@ -8,13 +10,17 @@ import { ModelInfo, ConnectionState, DiscoveryService, LMStudioStatus } from './
 export class ModelManager {
   private readonly logger: vscode.LogOutputChannel;
   private discoveryService: DiscoveryService;
-  
+  private readonly globalState: vscode.Memento;
+
   private activeModelId: string | undefined;
   private availableModels: ModelInfo[] = [];
+  private copilotEnabledModels: Record<string, boolean>;
 
-  constructor(logger: vscode.LogOutputChannel, discoveryService: DiscoveryService) {
+  constructor(logger: vscode.LogOutputChannel, discoveryService: DiscoveryService, globalState: vscode.Memento) {
     this.logger = logger;
     this.discoveryService = discoveryService;
+    this.globalState = globalState;
+    this.copilotEnabledModels = globalState.get<Record<string, boolean>>(COPILOT_ENABLED_KEY, {});
   }
 
   /**
@@ -143,5 +149,32 @@ export class ModelManager {
 
     const model = this.availableModels.find(m => m.id === this.activeModelId || m.name === this.activeModelId);
     return model ? model.name : this.activeModelId;
+  }
+
+  /**
+   * Set the copilot-enabled state for a model key and persist it.
+   */
+  public setCopilotEnabled(modelKey: string, enabled: boolean): void {
+    this.copilotEnabledModels[modelKey] = enabled;
+    void this.globalState.update(COPILOT_ENABLED_KEY, this.copilotEnabledModels);
+    this.logger.debug(`Copilot enabled for "${modelKey}": ${enabled}`);
+  }
+
+  /**
+   * Returns available models filtered to those whose copilot-enabled state is true.
+   * Absent key defaults to true (all-enabled on first use).
+   */
+  public getCopilotEnabledModels(): ModelInfo[] {
+    return this.availableModels.filter(m => {
+      const val = this.copilotEnabledModels[m.id];
+      return val === undefined ? true : val;
+    });
+  }
+
+  /**
+   * Returns the full copilotEnabled map for sending to the webview.
+   */
+  public getCopilotEnabledMap(): Record<string, boolean> {
+    return { ...this.copilotEnabledModels };
   }
 }

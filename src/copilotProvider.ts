@@ -46,11 +46,11 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
     this.logger.debug(`provideLanguageModelChatInformation called (silent: ${options.silent})`);
 
     try {
-      const availableModels = this.modelManager.getAvailableModels();
+      const availableModels = this.modelManager.getCopilotEnabledModels();
       const activeModelId = this.modelManager.getActiveModelId();
 
       this.logger.debug(
-        `Providing ${availableModels.length} models to Copilot (active: ${activeModelId})`
+        `Providing ${availableModels.length} copilot-enabled models to Copilot (active: ${activeModelId})`
       );
 
       const modelInfo: vscode.LanguageModelChatInformation[] = availableModels
@@ -97,7 +97,7 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
    * Only fires the event if the model set has actually changed since the last call.
    */
   public notifyModelsChanged(): void {
-    const currentIds = this.modelManager.getAvailableModels().map(m => m.id).sort().join(',');
+    const currentIds = this.modelManager.getCopilotEnabledModels().map(m => m.id).sort().join(',');
     if (currentIds !== this.lastModelIds) {
       this.lastModelIds = currentIds;
       this._onDidChangeLanguageModelChatInformation.fire();

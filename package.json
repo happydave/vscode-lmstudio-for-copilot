@@ -2,7 +2,7 @@
   "name": "lmstudio-for-copilot",
   "displayName": "LM Studio Copilot",
   "description": "VS Code extension providing inline code completion powered by LM Studio models with automatic discovery",
-  "version": "0.1.15",
+  "version": "0.2.1",
   "publisher": "lmstudio",
   "repository": {
     "type": "git",
@@ -57,21 +57,16 @@
         "command": "lmstudio.toggleContextPrioritization",
         "title": "LM Studio: Toggle Context Prioritization",
         "category": "LM Studio"
+      },
+      {
+        "command": "lmstudio.openConfig",
+        "title": "LM Studio: Open Configuration",
+        "category": "LM Studio"
       }
     ],
     "configuration": {
       "title": "LM Studio Copilot",
       "properties": {
-        "lmStudioCopilot.serverHost": {
-          "type": "string",
-          "default": "localhost",
-          "description": "Hostname or IP address of the LM Studio HTTP server"
-        },
-        "lmStudioCopilot.serverPort": {
-          "type": "number",
-          "default": 1234,
-          "description": "Port number for LM Studio HTTP server"
-        },
         "lmStudioCopilot.requestTimeout": {
           "type": "number",
           "default": 86400000,
@@ -197,6 +192,24 @@
         "displayName": "LM Studio"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "lmstudio-container",
+          "title": "LM Studio",
+          "icon": "resources/lmstudio-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "lmstudio-container": [
+        {
+          "id": "lmstudio.configView",
+          "name": "LM Studio",
+          "type": "webview"
+        }
+      ]
+    },
     "menus": {
       "commandPalette": [
         {

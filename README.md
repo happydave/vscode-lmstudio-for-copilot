@@ -6,9 +6,10 @@ A VS Code extension that enables inline code suggestions powered by language mod
 
 1. **Install LM Studio**: Download from [lmstudio.ai](https://lmstudio.ai)
 2. **Start LM Studio**: Run the LM Studio application on your machine
-3. **Load a model**: Select and load a model in LM Studio's UI
+3. **Load a model**: Select and load a model in LM Studio's UI (or use the Configuration panel)
 4. **Install extension**: Install this extension in VS Code
-5. **Start coding**: Inline suggestions will appear automatically as you type
+5. **Configure connection** *(optional)*: Click the **LM Studio icon** in the activity bar, or open Command Palette → **"LM Studio: Open Configuration"**, to add remote servers or manage connections (defaults to `localhost:1234`)
+6. **Start coding**: Inline suggestions will appear automatically as you type
 
 ## How It Works
 
@@ -22,12 +23,18 @@ The extension connects to LM Studio's local API server (default: `http://localho
 
 - **Automatic Discovery**: Detects LM Studio at startup and monitors for availability
 - **Model Auto-Selection**: Uses whichever model is currently loaded in LM Studio's UI
+- **Configuration Panel**: Click the **LM Studio icon** in the activity bar (sidebar) or open via Command Palette → **"LM Studio: Open Configuration"** to manage server connections, load/unload models, and control which models appear in the Copilot model picker
+- **Copilot Model Picker**: Each model card in the configuration panel has a **Copilot** checkbox. Only checked models appear in VS Code's Copilot model picker. All models are enabled by default; preferences persist across restarts
 - **Conversation-Driven Context**: Automatically includes the currently active editor file in the chat context when it is not already referenced in the conversation. Files the user has not explicitly opened or attached are never injected.
 - **Smart Context Scanner** *(opt-in)*: Discovers files that are already referenced in the conversation — via attached files, tool calls, or tool results — and injects those files into the context. Only files explicitly grounded in the conversation are considered; the workspace index is never scanned.
 - **Real-time Streaming**: Responses stream live as tokens are generated
 
-- Use `0` (default) to disable timeout entirely
-- Check LM Studio logs to see if requests are actually being processed
+## Troubleshooting
+
+**LM Studio not connecting / models not appearing in Copilot picker**
+- Open the LM Studio Copilot output channel (`LM Studio: Open Output Channel`) — it logs which server address is being used and whether discovery succeeded
+- If it shows the wrong address, open the Configuration panel, add your server, and click **→** (Switch) to make it active
+- Reload VS Code after switching servers
 
 **No suggestions appearing**
 - Ensure a model is loaded in LM Studio's UI
@@ -96,4 +103,4 @@ Tests use Jest and cover discovery service functionality.
 
 Contributions are welcome. This extension follows structured development patterns defined in the framework documentation.
 
-For detailed implementation specifications, see [docs/feature-plan.md](docs/feature-plan.md).
+This extension follows structured development patterns defined in the framework documentation.

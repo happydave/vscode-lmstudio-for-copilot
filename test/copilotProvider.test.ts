@@ -25,6 +25,7 @@ describe('LMStudioCopilotProvider', () => {
     };
     mockModelManager = {
       getAvailableModels: jest.fn().mockReturnValue([{ id: 'test-model', loadedContextLength: 4096 }]),
+      getCopilotEnabledModels: jest.fn().mockReturnValue([{ id: 'test-model', loadedContextLength: 4096 }]),
       getActiveModelId: jest.fn().mockReturnValue('test-model')
     };
     mockChatClient = {
@@ -205,9 +206,9 @@ describe('LMStudioCopilotProvider', () => {
   });
 
   it('should notify models changed', () => {
-    mockModelManager.getAvailableModels.mockReturnValue([{ id: 'model-a' }]);
+    mockModelManager.getCopilotEnabledModels.mockReturnValue([{ id: 'model-a' }]);
     provider.notifyModelsChanged();
-    expect(mockModelManager.getAvailableModels).toHaveBeenCalled();
+    expect(mockModelManager.getCopilotEnabledModels).toHaveBeenCalled();
   });
 
   it('should handle errors in provideLanguageModelChatResponse', async () => {
