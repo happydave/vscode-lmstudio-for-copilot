@@ -151,7 +151,8 @@ export class ChatClient {
     modelId: string,
     messages: ChatMessage[],
     tools?: ToolDefinition[],
-    temperature?: number
+    temperature?: number,
+    signal?: AbortSignal
   ): AsyncGenerator<StreamPart> {
     this.logger.debug(`Streaming completion request for model ${modelId}`);
     
@@ -182,7 +183,8 @@ export class ChatClient {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(request)
+        body: JSON.stringify(request),
+        signal
       });
 
       if (!response.ok) {
@@ -324,8 +326,13 @@ export class ChatClient {
       }
 
     } catch (error: any) {
+      if (error?.name === 'AbortError') {
+        this.logger.debug('streamCompletion: fetch aborted by caller');
+        return;
+      }
+
       const errorMessage = error instanceof Error ? error.message : String(error);
-      
+
       if (error instanceof ContextOverflowError || error instanceof APIError) {
         throw error;
       }
@@ -338,6 +345,32 @@ export class ChatClient {
 
       // Re-throw as generic LMStudioError if not already specialized
       throw new APIError(`LM Studio chat error: ${errorMessage}`, 500);
+    }
+  }
+
+  /**
+   * Send a minimal non-streaming request to ensure the model is loaded before a real request.
+   * Errors are swallowed — a warm-up failure must never block the real completion.
+   */
+  public async warmModel(modelId: string): Promise<void> {
+    try {
+      this.logger.debug(`warmModel: sending pre-flight for ${modelId}`);
+      const url = `http://${this.host}:${this.port}/v1/chat/completions`;
+      const body = JSON.stringify({
+        model: modelId,
+        messages: [{ role: 'user', content: 'Hi' }],
+        stream: false,
+        max_tokens: 1,
+        temperature: 0
+      });
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body
+      });
+      this.logger.debug(`warmModel: pre-flight responded with HTTP ${response.status}`);
+    } catch (error) {
+      this.logger.warn(`warmModel: pre-flight failed (ignored): ${error}`);
     }
   }
 

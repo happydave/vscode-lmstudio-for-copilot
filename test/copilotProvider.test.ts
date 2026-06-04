@@ -29,7 +29,8 @@ describe('LMStudioCopilotProvider', () => {
       getActiveModelId: jest.fn().mockReturnValue('test-model')
     };
     mockChatClient = {
-      streamCompletion: jest.fn()
+      streamCompletion: jest.fn(),
+      warmModel: jest.fn().mockResolvedValue(undefined)
     };
     mockTokenizer = {
       recordObservation: jest.fn(),
@@ -74,7 +75,7 @@ describe('LMStudioCopilotProvider', () => {
     const model = { id: 'lmstudio-test-model' } as any;
     const messages = [] as any;
     const options = {} as any;
-    const token = { isCancellationRequested: false } as any;
+    const token = { isCancellationRequested: false, onCancellationRequested: jest.fn().mockReturnValue({ dispose: jest.fn() }) } as any;
 
     await provider.provideLanguageModelChatResponse(model, messages, options, progress, token);
 
@@ -92,7 +93,7 @@ describe('LMStudioCopilotProvider', () => {
     const model = { id: 'lmstudio-test-model' } as any;
     const messages = [] as any;
     const options = {} as any;
-    const token = { isCancellationRequested: false } as any;
+    const token = { isCancellationRequested: false, onCancellationRequested: jest.fn().mockReturnValue({ dispose: jest.fn() }) } as any;
 
     await provider.provideLanguageModelChatResponse(model, messages, options, progress, token);
 
@@ -119,7 +120,7 @@ describe('LMStudioCopilotProvider', () => {
     const model = { id: 'lmstudio-test-model' } as any;
     const messages = [] as any;
     const options = {} as any;
-    const token = { isCancellationRequested: false } as any;
+    const token = { isCancellationRequested: false, onCancellationRequested: jest.fn().mockReturnValue({ dispose: jest.fn() }) } as any;
 
     await provider.provideLanguageModelChatResponse(model, messages, options, progress, token);
 
@@ -127,7 +128,8 @@ describe('LMStudioCopilotProvider', () => {
       'lmstudio-test-model',
       expect.any(Array),
       undefined,
-      0.1
+      0.1,
+      expect.any(AbortSignal)
     );
   });
   it('should detect and halt tool-call loops', async () => {
@@ -153,7 +155,7 @@ describe('LMStudioCopilotProvider', () => {
     const model = { id: 'lmstudio-test-model' } as any;
     const messages = [] as any;
     const options = {} as any;
-    const token = { isCancellationRequested: false } as any;
+    const token = { isCancellationRequested: false, onCancellationRequested: jest.fn().mockReturnValue({ dispose: jest.fn() }) } as any;
 
     await provider.provideLanguageModelChatResponse(model, messages, options, progress, token);
 
@@ -190,7 +192,7 @@ describe('LMStudioCopilotProvider', () => {
     const model = { id: 'lmstudio-test-model' } as any;
     const messages = [] as any;
     const options = {} as any;
-    const token = { isCancellationRequested: false } as any;
+    const token = { isCancellationRequested: false, onCancellationRequested: jest.fn().mockReturnValue({ dispose: jest.fn() }) } as any;
 
     await provider.provideLanguageModelChatResponse(model, messages, options, progress, token);
 
@@ -217,9 +219,94 @@ describe('LMStudioCopilotProvider', () => {
     const model = { id: 'lmstudio-test-model' } as any;
     const messages = [] as any;
     const options = {} as any;
-    const token = { isCancellationRequested: false } as any;
+    const token = { isCancellationRequested: false, onCancellationRequested: jest.fn().mockReturnValue({ dispose: jest.fn() }) } as any;
 
     await provider.provideLanguageModelChatResponse(model, messages, options, progress, token);
     expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('Test Error'));
+  });
+
+  it('should call warmModel before streaming', async () => {
+    const mockStream = (async function* () {
+      yield { kind: 'text', content: 'Hello' };
+    })();
+    mockChatClient.streamCompletion.mockReturnValue(mockStream);
+
+    const progress = { report: jest.fn() };
+    const model = { id: 'lmstudio-test-model' } as any;
+    const token = { isCancellationRequested: false, onCancellationRequested: jest.fn().mockReturnValue({ dispose: jest.fn() }) } as any;
+
+    await provider.provideLanguageModelChatResponse(model, [], {} as any, progress, token);
+
+    expect(mockChatClient.warmModel).toHaveBeenCalledWith('test-model');
+  });
+
+  it('should report TTFT cancellation message when token is cancelled after warm-up', async () => {
+    mockChatClient.warmModel.mockImplementation(async () => {
+      // simulate token being cancelled by VS Code during warm-up
+    });
+
+    const progress = { report: jest.fn() };
+    const model = { id: 'lmstudio-test-model' } as any;
+    const token = { isCancellationRequested: true, onCancellationRequested: jest.fn().mockReturnValue({ dispose: jest.fn() }) } as any;
+
+    await provider.provideLanguageModelChatResponse(model, [], {} as any, progress, token);
+
+    const textParts = progress.report.mock.calls
+      .filter((c: any[]) => c[0] instanceof vscode.LanguageModelTextPart)
+      .map((c: any[]) => c[0].value);
+    expect(textParts.some((v: string) => v.includes('cancelled the request before the first token'))).toBe(true);
+    expect(mockChatClient.streamCompletion).not.toHaveBeenCalled();
+  });
+
+  it('should report TTFT cancellation message when stream yields nothing and token is cancelled', async () => {
+    const mockStream = (async function* () {
+      // yields nothing — simulates VS Code cancelling before first token arrives
+    })();
+    mockChatClient.streamCompletion.mockReturnValue(mockStream);
+
+    const progress = { report: jest.fn() };
+    const model = { id: 'lmstudio-test-model' } as any;
+    const token = { isCancellationRequested: true, onCancellationRequested: jest.fn().mockReturnValue({ dispose: jest.fn() }) } as any;
+
+    // warmModel completes fine; token is cancelled immediately afterwards
+    await provider.provideLanguageModelChatResponse(model, [], {} as any, progress, token);
+
+    const textParts = progress.report.mock.calls
+      .filter((c: any[]) => c[0] instanceof vscode.LanguageModelTextPart)
+      .map((c: any[]) => c[0].value);
+    expect(textParts.some((v: string) => v.includes('cancelled the request before the first token'))).toBe(true);
+  });
+
+  it('should pass an AbortSignal to streamCompletion', async () => {
+    const mockStream = (async function* () {
+      yield { kind: 'text', content: 'Hello' };
+    })();
+    mockChatClient.streamCompletion.mockReturnValue(mockStream);
+
+    const progress = { report: jest.fn() };
+    const model = { id: 'lmstudio-test-model' } as any;
+    const token = { isCancellationRequested: false, onCancellationRequested: jest.fn().mockReturnValue({ dispose: jest.fn() }) } as any;
+
+    await provider.provideLanguageModelChatResponse(model, [], {} as any, progress, token);
+
+    const signalArg = mockChatClient.streamCompletion.mock.calls[0][4];
+    expect(signalArg).toBeDefined();
+    expect(signalArg).toHaveProperty('aborted');
+  });
+
+it('should dispose the onCancellationRequested listener after streaming completes', async () => {
+    const mockStream = (async function* () {
+      yield { kind: 'text', content: 'Hello' };
+    })();
+    mockChatClient.streamCompletion.mockReturnValue(mockStream);
+
+    const disposable = { dispose: jest.fn() };
+    const progress = { report: jest.fn() };
+    const model = { id: 'lmstudio-test-model' } as any;
+    const token = { isCancellationRequested: false, onCancellationRequested: jest.fn().mockReturnValue(disposable) } as any;
+
+    await provider.provideLanguageModelChatResponse(model, [], {} as any, progress, token);
+
+    expect(disposable.dispose).toHaveBeenCalled();
   });
 });

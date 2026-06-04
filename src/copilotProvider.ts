@@ -142,8 +142,21 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
       const modelTemperatures = config.get<Record<string, number>>('modelTemperatures', {});
       const temperatureOverride = modelTemperatures[activeModel.id];
 
+      // 3. Pre-flight: warm the model so TTFT stays below VS Code's cancellation threshold.
+      // Errors are swallowed inside warmModel — a failed warm-up must not block the real request.
+      await this.chatClient.warmModel(activeModel.id);
 
-    // 2. Execute streaming completion request
+      if (token.isCancellationRequested) {
+        progress.report(new vscode.LanguageModelTextPart(
+          '[LM Studio: VS Code cancelled the request before the first token arrived — the model may be loading slowly. Try sending the message again.]'
+        ));
+        return;
+      }
+
+      const abort = new AbortController();
+      const abortListener = token.onCancellationRequested(() => abort.abort());
+
+    // 4. Execute streaming completion request
     const streamingPath = (async () => {
       if (chatMessages.length === 0) {
         this.logger.warn(`Path A: no converted messages to send`);
@@ -245,10 +258,11 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
       };
 
       for await (const part of this.chatClient.streamCompletion(
-        model.id, 
-        chatMessages, 
+        model.id,
+        chatMessages,
         tools.length > 0 ? tools : undefined,
-        temperatureOverride
+        temperatureOverride,
+        abort.signal
       )) {
         if (token.isCancellationRequested || loopDetected) { break; }
 
@@ -326,7 +340,11 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
     let streamCount: number;
 
     try {
-      streamCount = await streamingPath;
+      try {
+        streamCount = await streamingPath;
+      } finally {
+        abortListener.dispose();
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error(`Streaming path threw: ${errorMessage}`);
@@ -345,10 +363,17 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
 
     this.logger.debug(`Path A yielded ${streamCount} parts`);
 
-    // If streaming produced nothing, surface an error to the user
-    if (streamCount === 0 && !token.isCancellationRequested) {
-      this.logger.warn(`Path A yielded nothing; reporting no response.`);
-      progress.report(new vscode.LanguageModelTextPart(`[No response from LM Studio — model generated no content]`));
+    // If streaming produced nothing, surface an appropriate error to the user
+    if (streamCount === 0) {
+      if (token.isCancellationRequested) {
+        this.logger.warn(`Path A yielded nothing; VS Code cancelled before first token (TTFT timeout).`);
+        progress.report(new vscode.LanguageModelTextPart(
+          '[LM Studio: VS Code cancelled the request before the first token arrived — the model may be loading slowly. Try sending the message again.]'
+        ));
+      } else {
+        this.logger.warn(`Path A yielded nothing; reporting no response.`);
+        progress.report(new vscode.LanguageModelTextPart(`[No response from LM Studio — model generated no content]`));
+      }
     }
     } catch (error) {
       this.logger.error(`Error in provideLanguageModelChatResponse: ${error}`);

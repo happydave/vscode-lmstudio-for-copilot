@@ -211,6 +211,63 @@ describe('ChatClient', () => {
     const requestBody = JSON.parse(fetchCall[1].body);
     expect(requestBody.temperature).toBe(0.2);
   });
+
+  describe('AbortSignal', () => {
+    it('should forward signal to fetch', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        body: createMockStream(['data: [DONE]\n\n'])
+      });
+
+      const controller = new AbortController();
+      for await (const _ of client.streamCompletion('test-model', [], undefined, undefined, controller.signal)) {}
+
+      const fetchCall = (global.fetch as jest.Mock).mock.calls[0];
+      expect(fetchCall[1].signal).toBe(controller.signal);
+    });
+
+    it('should end the generator cleanly when fetch is aborted', async () => {
+      const abortError = Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+      (global.fetch as jest.Mock).mockRejectedValue(abortError);
+
+      const parts: any[] = [];
+      for await (const part of client.streamCompletion('test-model', [], undefined, undefined, new AbortController().signal)) {
+        parts.push(part);
+      }
+
+      expect(parts).toHaveLength(0);
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('warmModel', () => {
+    it('should send a non-streaming request with max_tokens 1', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({ ok: true });
+
+      await client.warmModel('my-model');
+
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
+      expect(url).toContain('/v1/chat/completions');
+      const body = JSON.parse(init.body);
+      expect(body.model).toBe('my-model');
+      expect(body.stream).toBe(false);
+      expect(body.max_tokens).toBe(1);
+    });
+
+    it('should swallow fetch errors without throwing', async () => {
+      (global.fetch as jest.Mock).mockRejectedValue(new Error('ECONNREFUSED'));
+
+      await expect(client.warmModel('my-model')).resolves.toBeUndefined();
+      expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('pre-flight failed'));
+    });
+
+    it('should swallow non-OK responses without throwing', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({ ok: false, status: 503 });
+
+      await expect(client.warmModel('my-model')).resolves.toBeUndefined();
+    });
+  });
 });
 
 function createMockStream(chunks: string[]) {
