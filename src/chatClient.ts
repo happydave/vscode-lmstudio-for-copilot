@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConnectionError, TimeoutError, ContextOverflowError, APIError } from './errors';
+import { ConnectionError, ContextOverflowError, APIError } from './errors';
 
 /**
  * Chat message for LM Studio API.
@@ -94,7 +94,6 @@ export class ChatClient {
   private readonly logger: vscode.LogOutputChannel;
   private host: string = 'localhost';
   private port: number = 1234;
-  private requestTimeout: number = 0; // 0 = no timeout
   private showReasoningContent: boolean = true;
   private temperature: number = ChatClient.DEFAULT_TEMPERATURE;
 
@@ -137,14 +136,6 @@ export class ChatClient {
   public setPort(port: number): void {
     this.port = port;
     this.logger.trace(`ChatClient port set to ${port}`);
-  }
-
-  /**
-   * Set the request timeout in milliseconds.
-   */
-  public setRequestTimeout(timeout: number): void {
-    this.requestTimeout = timeout;
-    this.logger.trace(`ChatClient request timeout set to ${timeout}ms`);
   }
 
   /**
@@ -191,8 +182,7 @@ export class ChatClient {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(request),
-        signal: this.requestTimeout > 0 ? AbortSignal.timeout(this.requestTimeout) : undefined
+        body: JSON.stringify(request)
       });
 
       if (!response.ok) {
@@ -342,12 +332,7 @@ export class ChatClient {
 
       this.logger.error(`Chat completion streaming failed: ${errorMessage}`);
 
-      // Check for fetch/network errors
-      if (error.name === 'AbortError' || errorMessage.includes('terminated') || errorMessage.includes('timed out')) {
-        throw new TimeoutError(this.requestTimeout);
-      }
-      
-      if (errorMessage.includes('fetch failed') || errorMessage.includes('ECONNREFUSED')) {
+      if (errorMessage.includes('fetch failed') || errorMessage.includes('ECONNREFUSED') || errorMessage.includes('terminated')) {
         throw new ConnectionError(errorMessage, error);
       }
 
@@ -387,8 +372,7 @@ export class ChatClient {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(request),
-        signal: this.requestTimeout > 0 ? AbortSignal.timeout(this.requestTimeout) : undefined
+        body: JSON.stringify(request)
       });
 
       if (!response.ok) {

@@ -60,18 +60,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const initialHost = activeConfig?.host ?? 'localhost';
   const initialPort = activeConfig?.port ?? 1234;
 
-  const config = vscode.workspace.getConfiguration('lmStudioCopilot');
-  const disableAllTimeouts = config.get<boolean>('disableAllTimeouts', true);
-  const requestTimeout = disableAllTimeouts ? 0 : config.get<number>('requestTimeout', 86400000);
-
   discoveryService.setHost(initialHost);
   discoveryService.setPort(initialPort);
-  discoveryService.setRequestTimeout(requestTimeout);
   chatClient.setHost(initialHost);
   chatClient.setPort(initialPort);
-  chatClient.setRequestTimeout(requestTimeout);
   const activeConnectionName = connectionManager.getActiveName() ?? '(none)';
-  outputChannel.info(`Active connection: "${activeConnectionName}" → ${initialHost}:${initialPort}, timeout: ${disableAllTimeouts ? 'disabled' : `${requestTimeout}ms`}`);
+  outputChannel.info(`Active connection: "${activeConnectionName}" → ${initialHost}:${initialPort}`);
 
   // Register disposables
   context.subscriptions.push(outputChannel);
@@ -94,17 +88,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         tokenizer.loadConfiguration();
       }
 
-      if (
-        e.affectsConfiguration('lmStudioCopilot.requestTimeout') ||
-        e.affectsConfiguration('lmStudioCopilot.disableAllTimeouts')
-      ) {
-        const updated = vscode.workspace.getConfiguration('lmStudioCopilot');
-        const newDisable = updated.get<boolean>('disableAllTimeouts', true);
-        const newTimeout = newDisable ? 0 : updated.get<number>('requestTimeout', 86400000);
-        discoveryService.setRequestTimeout(newTimeout);
-        chatClient.setRequestTimeout(newTimeout);
-        outputChannel.info(`Timeout updated: ${newDisable ? 'disabled' : `${newTimeout}ms`}`);
-      }
     })
   );
 

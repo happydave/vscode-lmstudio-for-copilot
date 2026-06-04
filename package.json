@@ -2,7 +2,7 @@
   "name": "lmstudio-for-copilot",
   "displayName": "LM Studio Copilot",
   "description": "VS Code extension providing inline code completion powered by LM Studio models with automatic discovery",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "lmstudio",
   "repository": {
     "type": "git",
@@ -67,16 +67,6 @@
     "configuration": {
       "title": "LM Studio Copilot",
       "properties": {
-        "lmStudioCopilot.requestTimeout": {
-          "type": "number",
-          "default": 86400000,
-          "description": "Timeout in milliseconds for requests to the LM Studio server (default 24h). Has no effect when lmStudioCopilot.disableAllTimeouts is true."
-        },
-        "lmStudioCopilot.disableAllTimeouts": {
-          "type": "boolean",
-          "default": true,
-          "description": "Disable all request timeouts. Recommended for local models which may be slow on large tasks."
-        },
         "lmStudioCopilot.enableSuggestions": {
           "type": "boolean",
           "default": true,
