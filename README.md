@@ -50,9 +50,9 @@ The extension connects to LM Studio's local API server (default: `http://localho
 - Tune scanner behavior with `lmStudioCopilot.smartContextScanner.maxFilesToScan` (default 50, max candidates that advance to the file-read stage after scoring) and `lmStudioCopilot.smartContextScanner.maxResultFiles` (default 5, max files injected per request).
 
 **Configuring Temperature**
-- Global default temperature can be set via `lmStudioCopilot.temperature` (default `0.7`).
-- Per-model overrides can be set via `lmStudioCopilot.modelTemperatures` using an object mapping model IDs to temperature values (e.g., `{ "qwen2.5-7b-instruct": 0.1 }`).
-- Per-model overrides take precedence over the global default.
+- The easiest way to set temperature is directly in the **Configuration panel**: expand a model card and adjust the **Temperature** field (default `1`). Saving loads the model with that temperature and persists it for all subsequent requests using that model.
+- A global default can also be set via `lmStudioCopilot.temperature` in VS Code settings (default `0.7`).
+- Per-model values set via the panel are stored under `lmStudioCopilot.modelTemperatures` and take precedence over the global default.
 
 **See "Refresh ignored" message when clicking refresh button**
 - This is expected behavior - the extension throttles rapid refresh attempts to prevent API overload

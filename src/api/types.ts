@@ -53,6 +53,7 @@ export interface LoadModelRequest {
   offload_kv_cache_to_gpu?: boolean;
   eval_batch_size?: number;
   num_experts?: number;
+  temperature?: number;
 }
 
 export interface LoadModelResponse {
@@ -228,6 +229,7 @@ export interface WebviewOutboundModelsUpdated {
   serverName: string;
   models: LmStudioModel[];
   copilotEnabled: Record<string, boolean>;
+  modelTemperatures: Record<string, number>;
 }
 
 export interface WebviewOutboundOperationProgress {

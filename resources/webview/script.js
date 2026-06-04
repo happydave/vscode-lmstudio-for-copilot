@@ -5,6 +5,7 @@ const state = {
   lastConnectedMap: {},
   modelsByServer: {},
   copilotEnabled: {}, // modelKey → boolean (absent = true)
+  modelTemperatures: {}, // modelKey → number
   loadingProgress: null,
 };
 
@@ -479,10 +480,18 @@ function buildSettingsDetailContent(model, instanceId) {
   html += '</div>';
   html += '<div class="settings-section"><h4 class="settings-section-title">Configuration</h4>';
 
+  const storedTemp = state.modelTemperatures[model.key];
+  const temperatureVal = storedTemp !== undefined ? storedTemp : 1;
+
   html += `
     <div class="form-group">
       <label for="lsf-context">Context Length${maxContext ? ` (max: ${maxContext})` : ''}</label>
       <input type="number" id="lsf-context" value="${contextVal || ''}" min="1"${maxContext ? ` max="${maxContext}"` : ''}>
+    </div>
+    <div class="form-group">
+      <label for="lsf-temperature">Temperature</label>
+      <input type="number" id="lsf-temperature" value="${temperatureVal}" min="0" max="2" step="0.1">
+      <div class="form-hint">Controls randomness of generated text (0–2).</div>
     </div>
   `;
 
@@ -587,7 +596,11 @@ async function handleSaveLoadSettings() {
     return;
   }
 
-  const config = { context_length: context };
+  const tempEl = document.getElementById('lsf-temperature');
+  const tempRaw = tempEl ? tempEl.value.trim() : '';
+  const temperature = tempRaw !== '' ? parseFloat(tempRaw) : 1;
+
+  const config = { context_length: context, temperature };
 
   if (modelData.format === 'gguf') {
     const faEl = document.getElementById('lsf-flash-attention');
@@ -631,6 +644,9 @@ window.addEventListener('message', (event) => {
         }
         if (msg.copilotEnabled !== undefined) {
           state.copilotEnabled = msg.copilotEnabled;
+        }
+        if (msg.modelTemperatures !== undefined) {
+          state.modelTemperatures = msg.modelTemperatures;
         }
         renderModelBrowser();
         break;

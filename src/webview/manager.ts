@@ -474,6 +474,12 @@ export class WebviewManager implements vscode.WebviewViewProvider {
       return;
     }
 
+    const temperatureError = this.validateAndPersistTemperature(modelKey, config);
+    if (temperatureError) {
+      this.post({ type: "operationFailed", error: temperatureError });
+      return;
+    }
+
     try {
       const response = await client.getModels();
       const currentModel = response.models.find((m: { key: string }) => m.key === modelKey);
@@ -492,6 +498,7 @@ export class WebviewManager implements vscode.WebviewViewProvider {
         loadConfig.flash_attention = config.flash_attention !== undefined ? config.flash_attention : true;
         loadConfig.offload_kv_cache_to_gpu = config.offload_kv_cache_to_gpu !== undefined ? config.offload_kv_cache_to_gpu : true;
       }
+      if (config.temperature !== undefined) { loadConfig.temperature = config.temperature; }
 
       this.post({ type: "operationProgress", message: `Loading "${currentModel.display_name}"...` });
       const result = await client.loadModel(loadConfig as unknown as import("../api/types").LoadModelRequest);
@@ -577,6 +584,12 @@ export class WebviewManager implements vscode.WebviewViewProvider {
       return;
     }
 
+    const temperatureError = this.validateAndPersistTemperature(modelKey, config);
+    if (temperatureError) {
+      this.post({ type: "operationFailed", error: temperatureError });
+      return;
+    }
+
     let displayName = modelKey;
     try {
       const response = await client.getModels();
@@ -593,6 +606,7 @@ export class WebviewManager implements vscode.WebviewViewProvider {
       if (config.context_length !== undefined) { loadConfig.context_length = config.context_length; }
       if (config.flash_attention !== undefined) { loadConfig.flash_attention = config.flash_attention; }
       if (config.offload_kv_cache_to_gpu !== undefined) { loadConfig.offload_kv_cache_to_gpu = config.offload_kv_cache_to_gpu; }
+      if (config.temperature !== undefined) { loadConfig.temperature = config.temperature; }
 
       const result = await client.loadModel(loadConfig as unknown as import("../api/types").LoadModelRequest);
       this.post({ type: "operationComplete", message: `Reloaded "${displayName}" in ${result.load_time_seconds.toFixed(1)}s.` });
@@ -605,6 +619,20 @@ export class WebviewManager implements vscode.WebviewViewProvider {
     }
   }
 
+  private validateAndPersistTemperature(modelKey: string, config: Record<string, unknown>): string | null {
+    if (config.temperature === undefined) { return null; }
+    const temp = Number(config.temperature);
+    if (!isFinite(temp) || temp < 0 || temp > 2) {
+      this.logger.warn(`[WebviewManager] Invalid temperature for "${modelKey}": ${config.temperature}`);
+      return `Temperature must be a number between 0 and 2 (got ${config.temperature}).`;
+    }
+    const vsConfig = vscode.workspace.getConfiguration('lmStudioCopilot');
+    const existing = vsConfig.get<Record<string, number>>('modelTemperatures', {});
+    void vsConfig.update('modelTemperatures', { ...existing, [modelKey]: temp }, vscode.ConfigurationTarget.Global);
+    this.logger.debug(`[WebviewManager] Persisted temperature ${temp} for "${modelKey}"`);
+    return null;
+  }
+
   private async handleRefreshAll(): Promise<void> {
     this.sendConnectionsUpdated();
     const connections = this.storage.getConnections();
@@ -614,7 +642,8 @@ export class WebviewManager implements vscode.WebviewViewProvider {
         const response = await client.getModels();
         if (conn.name === this.connectionManager.getActiveName()) {
           const copilotEnabled = this.modelManager.getCopilotEnabledMap();
-          this.post({ type: "modelsUpdated", serverName: conn.name, models: response.models, copilotEnabled });
+          const modelTemperatures = vscode.workspace.getConfiguration('lmStudioCopilot').get<Record<string, number>>('modelTemperatures', {});
+          this.post({ type: "modelsUpdated", serverName: conn.name, models: response.models, copilotEnabled, modelTemperatures });
         }
       } catch {
         // Silently fail per-server
@@ -639,7 +668,8 @@ export class WebviewManager implements vscode.WebviewViewProvider {
       }
 
       const copilotEnabled = this.modelManager.getCopilotEnabledMap();
-      this.post({ type: "modelsUpdated", serverName, models: response.models, copilotEnabled });
+      const modelTemperatures = vscode.workspace.getConfiguration('lmStudioCopilot').get<Record<string, number>>('modelTemperatures', {});
+      this.post({ type: "modelsUpdated", serverName, models: response.models, copilotEnabled, modelTemperatures });
     } catch {
       if (serverName === this.connectionManager.getActiveName()) {
         this.connectionManager.setLastConnected(false);
