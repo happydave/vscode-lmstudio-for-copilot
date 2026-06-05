@@ -366,8 +366,10 @@ export class ChatClient {
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body
+        body,
+        signal: AbortSignal.timeout(30000)
       });
+      await response.text();
       this.logger.debug(`warmModel: pre-flight responded with HTTP ${response.status}`);
     } catch (error) {
       this.logger.warn(`warmModel: pre-flight failed (ignored): ${error}`);

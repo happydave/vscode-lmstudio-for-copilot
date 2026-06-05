@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { ModelInfo, ConnectionState, DiscoveryService, LMStudioStatus } from './discovery';
+import { ModelInfo, ConnectionState, DiscoveryService, LMStudioStatus, rawModelEntryToModelInfo } from './discovery';
+import type { LmStudioModel } from './api/types';
 
 const COPILOT_ENABLED_KEY = 'lmstudioCopilot.copilotEnabledModels';
 
@@ -166,6 +167,7 @@ export class ModelManager {
    */
   public getCopilotEnabledModels(): ModelInfo[] {
     return this.availableModels.filter(m => {
+      if (!m.loaded) { return false; }
       const val = this.copilotEnabledModels[m.id];
       return val === undefined ? true : val;
     });
@@ -176,5 +178,21 @@ export class ModelManager {
    */
   public getCopilotEnabledMap(): Record<string, boolean> {
     return { ...this.copilotEnabledModels };
+  }
+
+  /**
+   * Update available models directly from a raw API response, replacing any previous list.
+   * Used when the webview fetches models on server click so the Copilot selector stays current.
+   */
+  public applyApiModels(models: LmStudioModel[]): void {
+    this.availableModels = models.map(rawModelEntryToModelInfo);
+
+    const currentStillValid = this.activeModelId &&
+      this.availableModels.some(m => m.loaded && (m.id === this.activeModelId || m.name === this.activeModelId));
+
+    if (!currentStillValid) {
+      const firstLoaded = this.availableModels.find(m => m.loaded);
+      this.activeModelId = firstLoaded?.id;
+    }
   }
 }

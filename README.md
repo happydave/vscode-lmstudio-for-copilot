@@ -24,7 +24,7 @@ The extension connects to LM Studio's local API server (default: `http://localho
 - **Automatic Discovery**: Detects LM Studio at startup and monitors for availability
 - **Model Auto-Selection**: Uses whichever model is currently loaded in LM Studio's UI
 - **Configuration Panel**: Click the **LM Studio icon** in the activity bar (sidebar) or open via Command Palette → **"LM Studio: Open Configuration"** to manage server connections, load/unload models, and control which models appear in the Copilot model picker
-- **Copilot Model Picker**: Each model card in the configuration panel has a **Copilot** checkbox. Only checked models appear in VS Code's Copilot model picker. All models are enabled by default; preferences persist across restarts
+- **Copilot Model Picker**: Each model card in the configuration panel has a **Copilot** checkbox. Only checked models that are currently loaded appear in VS Code's Copilot model picker. All models are enabled by default; preferences persist across restarts. Clicking a server card refreshes the picker immediately — no window reload required
 - **Conversation-Driven Context**: Automatically includes the currently active editor file in the chat context when it is not already referenced in the conversation. Files the user has not explicitly opened or attached are never injected.
 - **Smart Context Scanner** *(opt-in)*: Discovers files that are already referenced in the conversation — via attached files, tool calls, or tool results — and injects those files into the context. Only files explicitly grounded in the conversation are considered; the workspace index is never scanned.
 - **Real-time Streaming**: Responses stream live as tokens are generated
@@ -34,7 +34,7 @@ The extension connects to LM Studio's local API server (default: `http://localho
 **LM Studio not connecting / models not appearing in Copilot picker**
 - Open the LM Studio Copilot output channel (`LM Studio: Open Output Channel`) — it logs which server address is being used and whether discovery succeeded
 - If it shows the wrong address, open the Configuration panel, add your server, and click **→** (Switch) to make it active
-- Reload VS Code after switching servers
+- Click the server card in the Configuration panel to refresh the model list immediately
 
 **No suggestions appearing**
 - Ensure a model is loaded in LM Studio's UI

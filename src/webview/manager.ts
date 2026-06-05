@@ -665,6 +665,8 @@ export class WebviewManager implements vscode.WebviewViewProvider {
 
       if (serverName === this.connectionManager.getActiveName()) {
         this.connectionManager.setLastConnected(true);
+        this.modelManager.applyApiModels(response.models);
+        this.notifyModelsChanged();
       }
 
       const copilotEnabled = this.modelManager.getCopilotEnabledMap();

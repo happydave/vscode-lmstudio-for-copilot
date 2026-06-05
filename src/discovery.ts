@@ -20,6 +20,33 @@ export class ModelInfo {
   ) {}
 }
 
+interface RawModelEntry {
+  id?: string;
+  key?: string;
+  name?: string;
+  display_name?: string;
+  loaded_instances?: Array<{ config?: { context_length?: number } }>;
+  architecture?: string | null;
+  max_context_length?: number | null;
+  quantization?: { name?: string } | null;
+}
+
+export function rawModelEntryToModelInfo(model: RawModelEntry): ModelInfo {
+  const loadedInstance = model.loaded_instances?.[0];
+  const id = model.id || model.key || '';
+  const name = model.name || model.display_name || id;
+  return new ModelInfo(
+    id,
+    name,
+    !!loadedInstance,
+    model.architecture ?? undefined,
+    'model',
+    model.max_context_length ? Number(model.max_context_length) : undefined,
+    loadedInstance?.config?.context_length ? Number(loadedInstance.config.context_length) : undefined,
+    model.quantization?.name ?? undefined,
+  );
+}
+
 export interface LMStudioStatus {
   connectionState: ConnectionState;
   activeModelId?: string;
@@ -183,23 +210,7 @@ export class DiscoveryService {
     
     this.logger.debug(`Found ${modelsData.length} models in LM Studio`);
 
-    const availableModels: ModelInfo[] = modelsData.map(model => {
-      const loadedInstance = model.loaded_instances?.[0];
-      // Support both old 'key'/'display_name' and new 'id'/'name' formats
-      const id = model.id || model.key;
-      const name = model.name || model.display_name || id;
-      
-      return {
-        id: id,
-        name: name,
-        loaded: !!loadedInstance,
-        architecture: model.architecture || undefined,
-        object: 'model',
-        maxContextLength: model.max_context_length ? Number(model.max_context_length) : undefined,
-        loadedContextLength: loadedInstance?.config?.context_length ? Number(loadedInstance.config.context_length) : undefined,
-        quantizationInfo: model.quantization?.name || undefined
-      };
-    });
+    const availableModels: ModelInfo[] = modelsData.map(rawModelEntryToModelInfo);
 
     if (availableModels.length === 0) {
       return { connectionState: ConnectionState.NoModelLoaded, availableModels: [] };
