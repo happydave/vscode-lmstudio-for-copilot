@@ -59,6 +59,12 @@ The extension connects to LM Studio's local API server (default: `http://localho
 - Default cooldown is 5 seconds between manual refreshes. Wait for the indicated time and try again
 - To adjust this behavior, configure `lmStudioCopilot.refreshCooldownMs` in settings (lower values allow faster refreshes)
 
+**Response cancelled before completing (slow or large models)**
+- VS Code enforces a ~60-second timeout before the first token of a response arrives. Slow models — or models that need time to load — can exceed this and get cancelled.
+- The extension automatically sends an invisible heartbeat token every 45 seconds while waiting for the first token, which resets VS Code's timer.
+- If your model consistently takes longer than 45 seconds to start, lower the interval: set `lmStudioCopilot.heartbeatIntervalSeconds` to a smaller value (e.g., `30`).
+- To disable heartbeats entirely, set `lmStudioCopilot.heartbeatIntervalSeconds` to `0`.
+
 **Output channel shows API errors**
 - This typically means LM Studio is running but the model encountered an issue
 - Try reloading the model or restarting LM Studio

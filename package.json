@@ -2,7 +2,7 @@
   "name": "lmstudio-for-copilot",
   "displayName": "LM Studio Copilot",
   "description": "VS Code extension providing inline code completion powered by LM Studio models with automatic discovery",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "publisher": "lmstudio",
   "repository": {
     "type": "git",
@@ -173,6 +173,12 @@
           "default": 3,
           "minimum": 2,
           "description": "Number of consecutive identical tool calls required to trigger loop detection and halt execution."
+        },
+        "lmStudioCopilot.heartbeatIntervalSeconds": {
+          "type": "number",
+          "default": 45,
+          "minimum": 0,
+          "description": "Seconds between heartbeat tokens sent while waiting for the first token from a slow model. Set to 0 to disable. Must be less than VS Code's ~60-second response timeout."
         }
       }
     },

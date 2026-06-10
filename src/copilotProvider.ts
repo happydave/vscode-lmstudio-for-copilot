@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ModelManager } from './modelManager';
-import { ChatClient, ChatMessage, ToolDefinition } from './chatClient';
+import { ChatClient, ChatMessage, ToolDefinition, StreamPart } from './chatClient';
 import { Tokenizer } from './tokenizer';
 import { RequestBuilder } from './requestBuilder';
 import { ContextManager } from './contextManager';
@@ -257,14 +257,52 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
         }
       };
 
-      for await (const part of this.chatClient.streamCompletion(
+      const heartbeatMs = config.get<number>('heartbeatIntervalSeconds', 45) * 1000;
+      let firstTokenReceived = false;
+
+      const iter = this.chatClient.streamCompletion(
         model.id,
         chatMessages,
         tools.length > 0 ? tools : undefined,
         temperatureOverride,
         abort.signal
-      )) {
+      )[Symbol.asyncIterator]();
+
+      let nextPromise = iter.next();
+
+      while (true) {
         if (token.isCancellationRequested || loopDetected) { break; }
+
+        let heartbeatTimerId: ReturnType<typeof setTimeout> | undefined;
+
+        let result!: IteratorResult<StreamPart>;
+
+        if (heartbeatMs > 0 && !firstTokenReceived) {
+          const raceResult = await Promise.race([
+            nextPromise.then(v => ({ tag: 'value' as const, v })),
+            new Promise<{ tag: 'heartbeat' }>(resolve => {
+              heartbeatTimerId = setTimeout(() => resolve({ tag: 'heartbeat' }), heartbeatMs);
+            })
+          ]);
+
+          if (raceResult.tag === 'heartbeat') {
+            if (!token.isCancellationRequested) {
+              progress.report(new vscode.LanguageModelTextPart('\u200B'));
+              this.logger.debug('Heartbeat emitted — awaiting first token');
+            }
+            continue;
+          }
+
+          clearTimeout(heartbeatTimerId);
+          result = raceResult.v;
+        } else {
+          result = await nextPromise;
+        }
+
+        if (result.done) { break; }
+
+        const part = result.value;
+        nextPromise = iter.next();
 
         if (part.kind === 'usage') {
           this.tokenizer.recordObservation(model.id, totalCharsSent, part.promptTokens);
@@ -272,11 +310,12 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
         }
 
         if (part.kind !== 'text') {
+          firstTokenReceived = true;
           // Native structured tool call delta — emit directly
           let inputObj: object;
           try { inputObj = JSON.parse(part.arguments) as object; }
           catch { inputObj = {}; }
-          
+
           if (checkLoop(part.name, inputObj)) {
             loopDetected = true;
             break;
@@ -287,6 +326,7 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
           continue;
         }
 
+        firstTokenReceived = true;
         textBuffer += part.content;
 
         // Process buffer, scanning for <tool_call> / </tool_call> tags
@@ -324,6 +364,9 @@ export class LMStudioCopilotProvider implements vscode.LanguageModelChatProvider
           }
         }
       }
+
+      // Close the generator on all exit paths (mirrors for-await cleanup semantics)
+      await iter.return?.(undefined);
 
       // Flush any remaining buffered text
       if (inToolCall) {
